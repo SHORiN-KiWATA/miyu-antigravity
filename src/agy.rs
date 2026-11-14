@@ -1,0 +1,70 @@
+//! 怎么调 agy：命令行、环境、标准输入那一行（设计第二节「怎么调」）。只拼，不起。
+
+use std::ffi::OsString;
+use std::path::Path;
+use std::process::Command;
+
+use serde_json::json;
+
+use crate::config::Config;
+
+/// `--print-timeout`：一整轮给一天，活不活靠核心的空闲时限判（设计第十节「整轮」）。
+pub const PRINT_TIMEOUT: &str = "86400s";
+
+/// 一问一答的参数：模型 `model`、代理 `agent`、`--add-dir` 给 `dir`。
+#[must_use]
+pub fn chat_args(model: &str, agent: &str, dir: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "--print=",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--dangerously-skip-permissions",
+        "--model",
+        model,
+        "--agent",
+        agent,
+        "--add-dir",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .collect();
+    args.push(dir.as_os_str().to_owned());
+    args.push("--print-timeout".into());
+    args.push(PRINT_TIMEOUT.into());
+    args
+}
+
+/// 列模型的参数。
+pub const MODELS_ARGS: [&str; 1] = ["models"];
+
+/// 起 agy 的命令：程序照配置（没配的在 `PATH` 里找 `agy`），参数 `args`，配置了家目录的把 `HOME` 换成它。别的环境照扩展
+/// 自己的原样传下去。
+#[must_use]
+pub fn command(
+    config: &Config,
+    args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>,
+) -> Command {
+    let mut command = Command::new(config.program());
+    command.args(args);
+    if let Some(home) = &config.home {
+        command.env("HOME", home);
+    }
+    command
+}
+
+/// 写进标准输入的一行：一轮人说的话 `text`，带换行。
+#[must_use]
+pub fn stdin_line(text: &str) -> String {
+    let mut line = json!({
+        "event": "user",
+        "message": {"content": [{"type": "text", "text": text}]}
+    })
+    .to_string();
+    line.push('\n');
+    line
+}
+
+#[cfg(test)]
+mod tests;
