@@ -186,3 +186,39 @@ fn bad_shapes_are_errors() {
     assert!(transcribe(&request(&[json!({"role": "system", "blocks": []})]), BUDGET).is_err());
     assert!(transcribe(&request(&[json!({"role": "user"})]), BUDGET).is_err());
 }
+
+#[test]
+fn a_new_turn_is_one_text_per_new_message_with_the_tail_last() {
+    let mut req = request(&[
+        user("q1"),
+        assistant("a1"),
+        user("q2"),
+        json!({"role": "user", "blocks": [{"type": "text", "text": "line"}, {"type": "path", "name": "a.txt", "path": "/w/a.txt"}]}),
+    ]);
+    assert_eq!(
+        new_turn(&req, 2).unwrap(),
+        [
+            "q2".to_string(),
+            format!("line\n{}", words::path_attached("a.txt", "/w/a.txt"))
+        ]
+    );
+    req["tail"] = json!("<note/>");
+    assert_eq!(
+        new_turn(&req, 3).unwrap(),
+        [format!(
+            "line\n{}\n\n<note/>",
+            words::path_attached("a.txt", "/w/a.txt")
+        )]
+    );
+}
+
+#[test]
+fn a_new_turn_without_text_asks_to_continue() {
+    let req = request(&[
+        user("q1"),
+        assistant("a1"),
+        json!({"role": "user", "blocks": [{"type": "text", "text": ""}]}),
+    ]);
+    assert_eq!(new_turn(&req, 2).unwrap(), [words::CONTINUE]);
+    assert!(new_turn(&json!({"messages": 3}), 0).is_err());
+}

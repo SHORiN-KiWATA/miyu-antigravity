@@ -52,12 +52,6 @@ impl Turn {
         }
     }
 
-    /// 挂上的代理该叫的名字。
-    #[must_use]
-    pub fn agent(&self) -> &str {
-        &self.agent
-    }
-
     /// agy 这段对话的编号（`init` 或 `result` 里的）。
     #[must_use]
     pub fn conversation(&self) -> Option<&str> {

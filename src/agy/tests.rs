@@ -44,6 +44,19 @@ fn stdin_line_is_one_user_event() {
 }
 
 #[test]
+fn stdin_texts_puts_one_text_block_per_message() {
+    let line = stdin_texts(&["first", "second\nline"]);
+    assert_eq!(line.matches('\n').count(), 1, "整条一行");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(line.trim_end()).unwrap(),
+        json!({"event": "user", "message": {"content": [
+            {"type": "text", "text": "first"},
+            {"type": "text", "text": "second\nline"}
+        ]}})
+    );
+}
+
+#[test]
 fn command_uses_the_configured_program_and_leaves_home_alone() {
     let plain = command(&Config::default(), MODELS_ARGS);
     assert_eq!(plain.get_program(), "agy");

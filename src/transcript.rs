@@ -4,6 +4,8 @@
 //! `[called tool NAME with ARGS]`、`[tool result]`；最后一轮人说的话（结尾连着的几条 user 消息）单独成块跟在后面。只有这
 //! 一轮、没有历史的，直接发那几条的字。`request.tail` 有的接在最后。
 //!
+//! 接在活着的 agy 对话上的新的一轮只发新的那几条（[`new_turn`]），一条一段。
+//!
 //! 整条不超过 [`BUDGET`] 字节：超了从最老的回合丢起、写一句省略；最后一轮不砍。给模型看的字在 [`crate::words`]。
 
 use std::collections::BTreeMap;
@@ -33,24 +35,7 @@ impl std::error::Error for BadRequest {}
 ///
 /// `messages` 不是数组、一条消息不是对象或 `role` 不是 `user`、`assistant`、`tool`、`blocks` 不是数组：[`BadRequest`]。
 pub fn transcribe(request: &Value, budget: usize) -> Result<String, BadRequest> {
-    let messages = request
-        .get("messages")
-        .and_then(Value::as_array)
-        .ok_or_else(|| BadRequest("request.messages is not an array".into()))?;
-    let described: BTreeMap<&str, &str> = request
-        .get("described")
-        .and_then(Value::as_object)
-        .map(|map| {
-            map.iter()
-                .filter_map(|(blob, text)| Some((blob.as_str(), text.as_str()?)))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let mut parsed = Vec::with_capacity(messages.len());
-    for message in messages {
-        parsed.push(Message::read(message, &described)?);
-    }
+    let parsed = parse(request)?;
     // 最后一轮：结尾连着的 user 消息；之前的都是历史。
     let live_from = parsed
         .iter()
@@ -101,6 +86,54 @@ pub fn transcribe(request: &Value, budget: usize) -> Result<String, BadRequest> 
     text.push_str("\n\n");
     text.push_str(&last);
     Ok(text)
+}
+
+/// 接在活着的 agy 对话上的新的一轮（设计第四节第 2 条）：`request.messages` 第 `from` 条起每条一段字，块转成字照
+/// [`transcribe`] 的规矩，没有字的不要；`request.tail` 有的接在最后一段后面；一段都没有的是 [`words::CONTINUE`]。
+///
+/// # Errors
+///
+/// 同 [`transcribe`]。
+pub fn new_turn(request: &Value, from: usize) -> Result<Vec<String>, BadRequest> {
+    let parsed = parse(request)?;
+    let mut texts: Vec<String> = parsed
+        .into_iter()
+        .skip(from)
+        .map(|message| message.body)
+        .filter(|body| !body.is_empty())
+        .collect();
+    if texts.is_empty() {
+        texts.push(words::CONTINUE.to_string());
+    }
+    if let Some(tail) = request.get("tail").and_then(Value::as_str)
+        && let Some(last) = texts.last_mut()
+    {
+        last.push_str("\n\n");
+        last.push_str(tail);
+    }
+    Ok(texts)
+}
+
+/// 读出 `request.messages` 的每一条。
+fn parse(request: &Value) -> Result<Vec<Message>, BadRequest> {
+    let messages = request
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| BadRequest("request.messages is not an array".into()))?;
+    let described: BTreeMap<&str, &str> = request
+        .get("described")
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter()
+                .filter_map(|(blob, text)| Some((blob.as_str(), text.as_str()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    messages
+        .iter()
+        .map(|message| Message::read(message, &described))
+        .collect()
 }
 
 /// 历史从哪一条起留：从最新往回加，放不下 `room` 就停；再往后挪到下一条 user 消息，让转写从一轮的开头起（截在回复、工具

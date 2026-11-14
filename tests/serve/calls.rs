@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::support::{Core, assert_conversation_removed, request};
+use crate::support::{Core, alive, assert_conversation_removed, request, wait_group_gone};
 
 fn hex(bytes: &[u8]) -> String {
     bytes
@@ -129,8 +129,21 @@ fn pong_streams_text_and_usage_and_cleans_up() {
         "agy 的东西只在 HOME 下"
     );
 
-    // 收尾：会话文件、工作目录都删了。
-    assert_conversation_removed(&core.home, record["conversation"].as_str().unwrap());
+    // AG-2：说完以后 agy 还在、登记着等下一轮，会话文件、工作目录都留着。
+    let pid = record["pid"].as_i64().unwrap();
+    let conversation = record["conversation"].as_str().unwrap();
+    assert!(alive(pid), "说完以后 agy 还在");
+    assert!(
+        core.home
+            .join(".gemini/antigravity-cli/conversations")
+            .join(format!("{conversation}.db"))
+            .exists()
+    );
+    assert_eq!(core.work_dirs_left(), 1);
+    // 扩展退出时收掉：整组没了，会话文件、工作目录都删了。
+    assert!(core.finish().success());
+    wait_group_gone(pid);
+    assert_conversation_removed(&core.home, conversation);
     assert_eq!(core.work_dirs_left(), 0);
 }
 
@@ -198,7 +211,11 @@ fn two_calls_at_once_each_get_their_own_deltas() {
     let records = core.records();
     assert_eq!(records.len(), 2, "两个 agy 进程");
     assert_ne!(records[0]["cwd"], records[1]["cwd"], "各有各的工作目录");
+    // AG-2：两段对话都留着；扩展退出时一起收掉。
+    assert_eq!(core.work_dirs_left(), 2);
+    assert!(core.finish().success());
     for record in &records {
+        wait_group_gone(record["pid"].as_i64().unwrap());
         assert_conversation_removed(&core.home, record["conversation"].as_str().unwrap());
     }
     assert_eq!(core.work_dirs_left(), 0);

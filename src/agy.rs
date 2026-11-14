@@ -54,11 +54,17 @@ pub fn command(
 /// 写进标准输入的一行：一轮人说的话 `text`，带换行。
 #[must_use]
 pub fn stdin_line(text: &str) -> String {
-    let mut line = json!({
-        "event": "user",
-        "message": {"content": [{"type": "text", "text": text}]}
-    })
-    .to_string();
+    stdin_texts(&[text])
+}
+
+/// 写进标准输入的一行：一轮人说的几段话 `texts`，一段一个 text 块，带换行。
+#[must_use]
+pub fn stdin_texts(texts: &[impl AsRef<str>]) -> String {
+    let content: Vec<_> = texts
+        .iter()
+        .map(|text| json!({"type": "text", "text": text.as_ref()}))
+        .collect();
+    let mut line = json!({"event": "user", "message": {"content": content}}).to_string();
     line.push('\n');
     line
 }

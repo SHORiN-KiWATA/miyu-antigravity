@@ -1,18 +1,22 @@
 //! miyu-antigravity：Miyu 的扩展包 `antigravity`，把本机的 Antigravity CLI（`agy`）当模型供应商（`docs/00-设计.md`）。
 //!
-//! - `miyu-antigravity serve`：核心拉起的扩展，提供模型驱动 `antigravity/antigravity`（[`rpc`]）。每次 `driver.call` 新开一段
-//!   agy 对话（[`call`]），整份历史转写成一条文字（[`transcript`]），agy 的流（[`stream`]）照 [`turn`] 交成增量。
+//! - `miyu-antigravity serve`：核心拉起的扩展，提供模型驱动 `antigravity/antigravity`（[`rpc`]）。一次 `driver.call`（[`call`]）
+//!   认得出是哪段活着的 agy 对话（[`sessions`]、[`registry`]）的下一轮的，只把新的话写进那个 agy（[`live`]）；认不上的新开
+//!   一段，整份历史转写成一条文字（[`transcript`]）。agy 的流（[`stream`]）照 [`turn`] 交成增量。
 //!
-//! 这一版是施工 AG-1：没有工具，agy 的原生工具全关。
+//! 这一版是施工 AG-2：还没有工具，agy 的原生工具全关。
 
 mod agent;
 mod agy;
 mod call;
 mod config;
 mod failure;
+mod live;
 mod models;
 mod process;
+mod registry;
 mod rpc;
+mod sessions;
 mod stream;
 mod transcript;
 mod turn;

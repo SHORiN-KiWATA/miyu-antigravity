@@ -1,8 +1,13 @@
 //! 系统提示词写成 agy 的自定义代理（设计第二节「系统提示词」、第九节）：`<家目录>/.gemini/config/agents/<名>/agent.md`，
 //! 名字是 `miyu-` 加 `request.system` 的 SHA-256 前 16 位十六进制，`--agent <名>` 选它。frontmatter 照旧版 Miyu 的
 //! `antigravity/setup.rs`；`tools: []` 把 agy 的原生工具全关（AG-1 没有工具）。正文是 `request.system` 原文。
+//!
+//! 回收（设计第八节「清理」）：每次写代理文件时，删掉 `miyu-` 开头、`agent.md` 一小时没改过、又不是活着的对话在用的代理
+//! 目录（[`sweep`]）；活着的对话每接一轮把它的 `agent.md` 摸新（[`touch`]），别的 Miyu 进程回收时也不会删它。
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
@@ -35,12 +40,18 @@ pub fn content(name: &str, system: &str) -> String {
     )
 }
 
+/// 代理目录多久没用过就回收。
+pub const MAX_AGE: Duration = Duration::from_hours(1);
+
+/// 代理目录的父目录。
+fn agents_dir(home: &Path) -> PathBuf {
+    home.join(".gemini/config/agents")
+}
+
 /// 代理文件在 `home` 下的位置。
 #[must_use]
 pub fn path(home: &Path, name: &str) -> PathBuf {
-    home.join(".gemini/config/agents")
-        .join(name)
-        .join("agent.md")
+    agents_dir(home).join(name).join("agent.md")
 }
 
 /// 把 `system` 写成 `home` 下的代理，交名字。先写进同目录的暂存文件再改名：几次调用同时写同一个代理时，agy 读到的总是整份。
@@ -62,6 +73,62 @@ pub fn write(home: &Path, system: &str) -> std::io::Result<String> {
         return Err(error);
     }
     Ok(name)
+}
+
+/// 把代理 `name` 的 `agent.md` 的修改时刻改成现在。
+///
+/// # Errors
+///
+/// 打不开、改不了：原样交。
+pub fn touch(home: &Path, name: &str) -> std::io::Result<()> {
+    std::fs::File::options()
+        .write(true)
+        .open(path(home, name))?
+        .set_modified(SystemTime::now())
+}
+
+/// 删掉 `home` 下名字以 `miyu-` 开头、`agent.md` 的修改时刻比 `now` 早 `max_age` 以上、又不在 `keep` 里的代理目录。别的名字的、
+/// 没有 `agent.md` 的不动；代理的父目录还没有的不算错。
+///
+/// # Errors
+///
+/// 读目录、删目录出错：交第一个错，别的照样删。
+pub fn sweep(
+    home: &Path,
+    keep: &HashSet<String>,
+    now: SystemTime,
+    max_age: Duration,
+) -> std::io::Result<()> {
+    let entries = match std::fs::read_dir(agents_dir(home)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut first_error = None;
+    for entry in entries {
+        let result = entry.and_then(|entry| {
+            let name = entry.file_name();
+            let Some(name) = name.to_str().filter(|name| name.starts_with("miyu-")) else {
+                return Ok(());
+            };
+            if keep.contains(name) {
+                return Ok(());
+            }
+            let modified = match std::fs::metadata(entry.path().join("agent.md")) {
+                Ok(metadata) => metadata.modified()?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            if now.duration_since(modified).is_ok_and(|age| age > max_age) {
+                std::fs::remove_dir_all(entry.path())?;
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -106,5 +173,55 @@ mod tests {
         let entries: Vec<_> = std::fs::read_dir(file.parent().unwrap()).unwrap().collect();
         assert_eq!(entries.len(), 1);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn sweep_removes_only_old_unused_miyu_agents() {
+        let home = std::env::temp_dir().join(format!(
+            "miyu-antigravity-sweep-{}",
+            crate::workspace::unique()
+        ));
+        sweep(&home, &HashSet::new(), SystemTime::now(), MAX_AGE).unwrap();
+        let old = SystemTime::now() - Duration::from_hours(2);
+        let agents = home.join(".gemini/config/agents");
+        for name in ["miyu-old", "miyu-in-use", "miyu-new", "someone-else"] {
+            write_named(&home, name);
+        }
+        for name in ["miyu-old", "miyu-in-use", "someone-else"] {
+            set_modified(&home, name, old);
+        }
+        std::fs::create_dir_all(agents.join("miyu-no-file")).unwrap();
+        let keep = HashSet::from(["miyu-in-use".to_string()]);
+        sweep(&home, &keep, SystemTime::now(), MAX_AGE).unwrap();
+        let mut left: Vec<String> = std::fs::read_dir(&agents)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["miyu-in-use", "miyu-new", "miyu-no-file", "someone-else"]
+        );
+
+        // 摸新以后不再算旧。
+        touch(&home, "miyu-in-use").unwrap();
+        sweep(&home, &HashSet::new(), SystemTime::now(), MAX_AGE).unwrap();
+        assert!(agents.join("miyu-in-use").exists());
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn write_named(home: &Path, name: &str) {
+        let file = path(home, name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x").unwrap();
+    }
+
+    fn set_modified(home: &Path, name: &str, at: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path(home, name))
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
     }
 }

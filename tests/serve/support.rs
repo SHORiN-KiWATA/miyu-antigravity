@@ -12,13 +12,15 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 /// 等一行至多多久。
 pub const WAIT: Duration = Duration::from_secs(30);
 
-/// 一个扮核心的测试：起着的扩展和它的几个目录。
+/// 一个扮核心的测试：起着的扩展和它的几个目录。用完（丢掉）时请它退出、删掉它的临时目录。
 pub struct Core {
     child: Child,
+    root: PathBuf,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
     /// 扩展的 `HOME`：agy 也照它跑。
@@ -73,11 +75,73 @@ pub fn request(system: &str, text: &str) -> Value {
     })
 }
 
+/// 一段内容的指纹：SHA-256 的前 16 位十六进制（核心的写法，见扩展参考 `driver.call` 的 `fingerprint`）。
+pub fn hash(value: &Value) -> String {
+    let digest = Sha256::digest(value.to_string().as_bytes());
+    hex(&digest[..8])
+}
+
+/// 字节写成小写十六进制。
+pub fn hex(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .flat_map(|byte| [byte >> 4, byte & 0x0f])
+        .map(|nibble| char::from_digit(u32::from(nibble), 16).expect("a nibble is a hex digit"))
+        .collect()
+}
+
+/// 请求的 `fingerprint`：工具面、system、每条消息各一个。
+pub fn fingerprint(request: &Value) -> Value {
+    let messages: Vec<String> = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(hash)
+        .collect();
+    json!({"tools": hash(&request["tools"]), "system": hash(&request["system"]), "messages": messages})
+}
+
+/// 在 `request` 后面接上一条 assistant（`answer`）和几条 user（`texts`）：同一段对话的下一轮。
+pub fn next_turn(request: &Value, answer: &str, texts: &[&str]) -> Value {
+    let mut next = request.clone();
+    let messages = next["messages"].as_array_mut().unwrap();
+    messages.push(json!({"role": "assistant", "blocks": [{"type": "text", "text": answer}]}));
+    for text in texts {
+        messages.push(json!({"role": "user", "blocks": [{"type": "text", "text": text}]}));
+    }
+    next
+}
+
+/// 进程 `pid` 还在（活着或者还没被收尸）。
+pub fn alive(pid: i64) -> bool {
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(pid).unwrap());
+    nix::sys::signal::kill(pid, None).is_ok()
+}
+
+/// 等到以 `pid` 为组号的进程组整组没了。
+pub fn wait_group_gone(pid: i64) {
+    let group = nix::unistd::Pid::from_raw(i32::try_from(pid).unwrap());
+    let deadline = Instant::now() + WAIT;
+    while nix::sys::signal::killpg(group, None).is_ok() {
+        assert!(Instant::now() < deadline, "进程组 {group} 还在");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 impl Core {
     /// 起扩展、握手：假 agy 照 `mode` 演。
     pub fn start(name: &str, mode: &str) -> Core {
-        let mut core = Core::spawn(name, mode);
-        let config = json!({"antigravity.binary": core.binary.to_str().unwrap()});
+        Core::start_with(name, mode, &[], &json!({}))
+    }
+
+    /// 同 [`Core::start`]，扩展另带环境变量 `env`，握手的配置另加 `config` 里的键。
+    pub fn start_with(name: &str, mode: &str, env: &[(&str, &str)], config: &Value) -> Core {
+        let mut core = Core::spawn_with(name, mode, env);
+        let mut keys = json!({"antigravity.binary": core.binary.to_str().unwrap()});
+        for (key, value) in config.as_object().unwrap() {
+            keys[key] = value.clone();
+        }
+        let config = keys;
         core.answer_hello(
             &json!({"protocol": 1, "language": "en", "config": config}),
             None,
@@ -87,6 +151,11 @@ impl Core {
 
     /// 只起不握手。
     pub fn spawn(name: &str, mode: &str) -> Core {
+        Core::spawn_with(name, mode, &[])
+    }
+
+    /// 只起不握手，扩展另带环境变量 `env`。
+    pub fn spawn_with(name: &str, mode: &str, env: &[(&str, &str)]) -> Core {
         let root = scratch(name);
         let [home, state, record, bin] = ["home", "state", "record", "bin"].map(|part| {
             let dir = root.join(part);
@@ -105,7 +174,9 @@ impl Core {
         .unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let mut child = Command::new(env!("CARGO_BIN_EXE_miyu-antigravity"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_miyu-antigravity"));
+        command.envs(env.iter().copied());
+        let mut child = command
             .arg("serve")
             .env("HOME", &home)
             .env("MIYU_STATE_DIR", &state)
@@ -130,6 +201,7 @@ impl Core {
         let stdin = child.stdin.take();
         Core {
             child,
+            root,
             stdin,
             lines,
             home,
@@ -173,8 +245,13 @@ impl Core {
         serde_json::from_str(&self.recv_line()).unwrap()
     }
 
-    /// 发一次 `driver.call`：请求编号 `id`、调用编号 `call`、模型 `gemini-3.8-flash-low`。
+    /// 发一次 `driver.call`：请求编号 `id`、调用编号 `call`、模型 `gemini-3.8-flash-low`，指纹照请求算（[`fingerprint`]）。
     pub fn call(&mut self, id: &str, call: &str, request: &Value) {
+        self.call_model(id, call, request, "gemini-3.8-flash-low");
+    }
+
+    /// 同 [`Core::call`]，模型是 `model`。
+    pub fn call_model(&mut self, id: &str, call: &str, request: &Value, model: &str) {
         self.send(&json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -183,8 +260,8 @@ impl Core {
                 "call": call,
                 "driver": "antigravity/antigravity",
                 "request": request,
-                "fingerprint": {"tools": "0", "system": "0", "messages": []},
-                "params": {"model": "gemini-3.8-flash-low"}
+                "fingerprint": fingerprint(request),
+                "params": {"model": model}
             }
         }));
     }
@@ -253,6 +330,14 @@ impl Core {
             .collect()
     }
 
+    /// 进程 `pid` 那个假 agy 的记录。
+    pub fn record_of(&self, pid: i64) -> Value {
+        self.records()
+            .into_iter()
+            .find(|record| record["pid"] == pid)
+            .unwrap_or_else(|| panic!("没有进程 {pid} 的记录"))
+    }
+
     /// 等到有一份记录带着 `key`。
     pub fn wait_record(&self, key: &str) -> Value {
         let deadline = Instant::now() + WAIT;
@@ -275,7 +360,7 @@ impl Core {
     }
 
     /// 关标准输入（请退出），等它退出。
-    pub fn finish(mut self) -> ExitStatus {
+    pub fn finish(&mut self) -> ExitStatus {
         drop(self.stdin.take());
         self.wait_exit()
     }
@@ -294,11 +379,19 @@ impl Core {
 }
 
 impl Drop for Core {
+    /// 关标准输入请它退出（它会收掉留着的 agy），等不到的杀掉；再删临时目录。
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            self.child.kill().ok();
-            self.child.wait().ok();
+        drop(self.stdin.take());
+        let deadline = Instant::now() + WAIT;
+        while self.child.try_wait().ok().flatten().is_none() {
+            if Instant::now() >= deadline {
+                self.child.kill().ok();
+                self.child.wait().ok();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
+        std::fs::remove_dir_all(&self.root).ok();
     }
 }
 

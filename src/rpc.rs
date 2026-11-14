@@ -3,7 +3,9 @@
 //!
 //! 先发 `hello`、读回应里的 `config`；之后读核心的请求和通知：`driver.call`（一个调用一个线程，可以几个同时跑）、
 //! `driver.cancel`、`driver.models`、`extension.config`；不认识的请求回 `-32601`。写出去的每一行加锁、整行写、刷新。标准错误只写
-//! 日志。握手被拒、配置读不懂的退出码 1（核心不再拉起）；标准输入读到头是请退出：收掉还在跑的 agy，退出码 0。
+//! 日志。握手被拒、配置读不懂的退出码 1（核心不再拉起）；标准输入读到头是请退出：收掉还在跑的和留着的 agy，退出码 0。
+//!
+//! 活着的 agy 对话记在一张登记表里（[`Registry`]），一个巡检线程按 `antigravity.keep_seconds` 收闲置到点的（[`Sweeper`]）。
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -17,6 +19,7 @@ use serde_json::{Map, Value, json};
 use crate::call::{self, Answer, Signal};
 use crate::config::Config;
 use crate::models;
+use crate::registry::{self, Registry, Sweeper};
 
 /// 往标准输出写的一头：几个线程共用，一行一锁。
 #[derive(Clone)]
@@ -107,9 +110,18 @@ pub fn serve(input: impl BufRead, out: &Out) -> ExitCode {
         break;
     }
 
+    let config = Arc::new(RwLock::new(config));
+    let registry = Arc::new(Registry::default());
+    let sweeper = Sweeper::start(
+        Arc::clone(&registry),
+        Arc::clone(&config),
+        registry::sweep_every(),
+    );
     let mut server = Server {
         out: out.clone(),
-        config: Arc::new(RwLock::new(config)),
+        config,
+        registry,
+        sweeper,
         calls: Arc::new(Mutex::new(HashMap::new())),
         threads: Vec::new(),
     };
@@ -141,6 +153,10 @@ fn next(lines: &mut impl Iterator<Item = std::io::Result<String>>) -> Option<Str
 struct Server {
     out: Out,
     config: Arc<RwLock<Config>>,
+    /// 活着的 agy 对话。
+    registry: Arc<Registry>,
+    /// 收闲置到点的 agy 的巡检线程。
+    sweeper: Sweeper,
     /// 在跑的 `driver.call`：调用编号 → 送信号的一头。
     calls: Arc<Mutex<HashMap<String, Sender<Signal>>>>,
     threads: Vec<JoinHandle<()>>,
@@ -226,8 +242,9 @@ impl Server {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let (out, calls) = (self.out.clone(), Arc::clone(&self.calls));
+        let registry = Arc::clone(&self.registry);
         self.threads.push(std::thread::spawn(move || {
-            let answer = call::run(&out, &config, &params, &receiver, &sender);
+            let answer = call::run(&out, &config, &registry, &params, &receiver, &sender);
             calls
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -269,7 +286,7 @@ impl Server {
         }));
     }
 
-    /// 退出前：让在跑的调用都收掉自己的 agy，等它们结束。
+    /// 退出前：让在跑的调用都收掉自己的 agy，等它们结束；停下巡检；收掉留着的 agy。
     fn shut_down(self) {
         for sender in self
             .calls
@@ -284,5 +301,7 @@ impl Server {
                 eprintln!("a call thread panicked while shutting down");
             }
         }
+        self.sweeper.stop();
+        self.registry.drain();
     }
 }

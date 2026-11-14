@@ -12,7 +12,7 @@ pub const BINARY: &str = "antigravity.binary";
 /// `antigravity.keep_seconds` 的键。
 pub const KEEP_SECONDS: &str = "antigravity.keep_seconds";
 /// `antigravity.keep_seconds` 的默认值：闲着的 agy 进程留 10 分钟。
-pub const DEFAULT_KEEP: Duration = Duration::from_secs(600);
+pub const DEFAULT_KEEP: Duration = Duration::from_mins(10);
 
 /// 现在的配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn keep_seconds_is_whole_seconds_and_null_is_the_default() {
         let mut config = Config::default();
-        assert_eq!(config.keep, Duration::from_secs(600));
+        assert_eq!(config.keep, Duration::from_mins(10));
         config.apply(&keys(&json!({KEEP_SECONDS: 30}))).unwrap();
         assert_eq!(config.keep, Duration::from_secs(30));
         config.apply(&keys(&json!({BINARY: "/bin/agy"}))).unwrap();
