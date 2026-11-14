@@ -1,0 +1,36 @@
+[package]
+name = "miyu-antigravity"
+description = "Miyu 的模型驱动扩展：把本机的 Antigravity CLI（agy）当模型供应商"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[[bin]]
+name = "miyu-antigravity"
+path = "src/main.rs"
+
+[dependencies]
+# 协议和 agy 的流都是一行一条的 JSON。preserve_order：工具参数照 agy 给的先后原样转出去（设计第四节「参数原文」）。
+serde_json = { version = "1", features = ["preserve_order"] }
+# 代理目录名是系统提示词的 SHA-256 前 16 位（设计第九节）；回答里的 `sent` 也是 SHA-256。
+sha2 = "0.11"
+
+[target.'cfg(unix)'.dependencies]
+# 对 agy 的进程组发 SIGTERM、SIGKILL（unsafe_code = "forbid"，不直接调 libc）。
+nix = { version = "0.31", default-features = false, features = ["signal", "process"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+unwrap_used = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

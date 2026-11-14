@@ -1,0 +1,47 @@
+# Antigravity 当模型供应商（包编号 antigravity，仓库、程序叫 miyu-antigravity）：登记模型驱动 antigravity/antigravity，
+# 这家供应商的每一次调用交给本机的 Antigravity CLI（agy），用主人在 agy 里已有的登录和订阅额度。设计见 docs/00-设计.md。
+
+[package]
+version = "0.1.0"
+protocol = [1, 1]
+miyu = "2026.11.0"
+name = { en = "Antigravity", zh = "Antigravity" }
+summary = { en = "Use the local Antigravity CLI (agy) as a model provider", zh = "把本机的 Antigravity CLI（agy）当模型供应商" }
+author = "SHORiN-KiWATA"
+license = "AGPL-3.0-or-later"
+icon = "rocket"
+# 带本机程序；进程组、信号照 Unix 写，第一版只打 Linux、macOS 的包（设计第十二节）。
+targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64"]
+
+[command]
+name = "antigravity"
+program = "miyu-antigravity"
+about = { en = "Antigravity CLI as a model provider (started by the Miyu core)", zh = "把 Antigravity CLI 当模型供应商（由 Miyu 核心拉起）" }
+
+[process]
+args = ["serve"]
+# model.driver：提供驱动 antigravity；network：agy 自己连 Google 的服务。
+capabilities = ["model.driver", "network"]
+
+[[driver]]
+name = "antigravity"
+cache = "best_effort"
+key = "none"
+# agy 只收文字，图由核心转述（设计第九节）。
+images = false
+
+[settings.binary]
+type = "text"
+max = 1024
+default = ""
+applies = "now"
+name = { en = "agy program", zh = "agy 程序" }
+description = { en = "Full path of the Antigravity CLI. Empty: look for agy on PATH.", zh = "Antigravity CLI 的完整路径。空着：在 PATH 里找 agy。" }
+
+[settings.home]
+type = "text"
+max = 1024
+default = ""
+applies = "now"
+name = { en = "agy home folder", zh = "agy 的家目录" }
+description = { en = "Run agy with this folder as HOME (its login lives in .gemini under it). Empty: the real home folder.", zh = "用这个目录当 HOME 跑 agy（登录在它下面的 .gemini 里）。空着：用真的家目录。" }
