@@ -91,13 +91,10 @@ pub fn run(
     let line = agy::stdin_line(&text);
     let sent = format!("sha256:{}", agent::hex(&Sha256::digest(line.as_bytes())));
 
-    let Some(home) = config.agy_home() else {
+    let Some(home) = workspace::home() else {
         return Answer::Result(turn::failed(
             Class::Unclassified,
-            &format!(
-                "there is no home folder to run agy in; set {}",
-                config::HOME
-            ),
+            "HOME is not set, so there is no home folder to run agy in",
         ));
     };
     let agent = match agent::write(&home, system) {

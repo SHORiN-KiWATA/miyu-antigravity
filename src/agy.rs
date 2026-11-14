@@ -39,8 +39,8 @@ pub fn chat_args(model: &str, agent: &str, dir: &Path) -> Vec<OsString> {
 /// 列模型的参数。
 pub const MODELS_ARGS: [&str; 1] = ["models"];
 
-/// 起 agy 的命令：程序照配置（没配的在 `PATH` 里找 `agy`），参数 `args`，配置了家目录的把 `HOME` 换成它。别的环境照扩展
-/// 自己的原样传下去。
+/// 起 agy 的命令：程序照配置（没配的在 `PATH` 里找 `agy`），参数 `args`。环境（`HOME` 在内）照扩展自己的原样传下去：
+/// 用哪个账号不归本包管。
 #[must_use]
 pub fn command(
     config: &Config,
@@ -48,9 +48,6 @@ pub fn command(
 ) -> Command {
     let mut command = Command::new(config.program());
     command.args(args);
-    if let Some(home) = &config.home {
-        command.env("HOME", home);
-    }
     command
 }
 

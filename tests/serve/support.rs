@@ -1,6 +1,6 @@
 //! 集成测试扮核心：起 `miyu-antigravity serve`，经管道读写一行一条的 JSON-RPC。`antigravity.binary` 指到假 agy
-//! （`tests/fake_agy.py` 的一种演法），`antigravity.home` 指到临时目录；扩展自己的 `HOME` 另是一个临时目录，真的
-//! `~/.gemini` 碰不到。临时目录都在 `CARGO_TARGET_TMPDIR` 下。
+//! （`tests/fake_agy.py` 的一种演法）；起扩展时把它的 `HOME` 设成临时目录，agy 照它跑，真的 `~/.gemini` 碰不到。临时
+//! 目录都在 `CARGO_TARGET_TMPDIR` 下。
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -21,10 +21,8 @@ pub struct Core {
     child: Child,
     stdin: Option<ChildStdin>,
     lines: Receiver<String>,
-    /// agy 的家目录（配置的 `antigravity.home`）。
+    /// 扩展的 `HOME`：agy 也照它跑。
     pub home: PathBuf,
-    /// 扩展自己的 `HOME`。
-    pub own_home: PathBuf,
     /// 扩展的 `MIYU_STATE_DIR`。
     pub state: PathBuf,
     /// 假 agy 写记录的目录。
@@ -79,10 +77,7 @@ impl Core {
     /// 起扩展、握手：假 agy 照 `mode` 演。
     pub fn start(name: &str, mode: &str) -> Core {
         let mut core = Core::spawn(name, mode);
-        let config = json!({
-            "antigravity.binary": core.binary.to_str().unwrap(),
-            "antigravity.home": core.home.to_str().unwrap(),
-        });
+        let config = json!({"antigravity.binary": core.binary.to_str().unwrap()});
         core.answer_hello(
             &json!({"protocol": 1, "language": "en", "config": config}),
             None,
@@ -93,12 +88,11 @@ impl Core {
     /// 只起不握手。
     pub fn spawn(name: &str, mode: &str) -> Core {
         let root = scratch(name);
-        let [home, own_home, state, record, bin] =
-            ["agy-home", "own-home", "state", "record", "bin"].map(|part| {
-                let dir = root.join(part);
-                std::fs::create_dir_all(&dir).unwrap();
-                dir
-            });
+        let [home, state, record, bin] = ["home", "state", "record", "bin"].map(|part| {
+            let dir = root.join(part);
+            std::fs::create_dir_all(&dir).unwrap();
+            dir
+        });
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let binary = bin.join("agy");
         std::fs::write(
@@ -113,7 +107,7 @@ impl Core {
 
         let mut child = Command::new(env!("CARGO_BIN_EXE_miyu-antigravity"))
             .arg("serve")
-            .env("HOME", &own_home)
+            .env("HOME", &home)
             .env("MIYU_STATE_DIR", &state)
             .env("FAKE_RECORD", &record)
             .env("FAKE_SAMPLES", manifest.join("tests/samples"))
@@ -139,7 +133,6 @@ impl Core {
             stdin,
             lines,
             home,
-            own_home,
             state,
             record,
             binary,

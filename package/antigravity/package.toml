@@ -38,10 +38,11 @@ applies = "now"
 name = { en = "agy program", zh = "agy 程序" }
 description = { en = "Full path of the Antigravity CLI. Empty: look for agy on PATH.", zh = "Antigravity CLI 的完整路径。空着：在 PATH 里找 agy。" }
 
-[settings.home]
-type = "text"
-max = 1024
-default = ""
+[settings.keep_seconds]
+type = "int"
+min = 0
+max = 86400
+default = 600
 applies = "now"
-name = { en = "agy home folder", zh = "agy 的家目录" }
-description = { en = "Run agy with this folder as HOME (its login lives in .gemini under it). Empty: the real home folder.", zh = "用这个目录当 HOME 跑 agy（登录在它下面的 .gemini 里）。空着：用真的家目录。" }
+name = { en = "Keep idle agy for (seconds)", zh = "闲着的 agy 留多久（秒）" }
+description = { en = "How long an idle agy process is kept for the next turn of its conversation before it is stopped.", zh = "一段对话说完以后，agy 进程留着等下一轮多久，到点收掉。" }

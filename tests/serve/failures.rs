@@ -194,7 +194,7 @@ fn a_refused_handshake_exits_with_1() {
 fn unreadable_config_exits_with_1() {
     let mut core = Core::spawn("bad-config", "sample:real-pong.jsonl");
     core.answer_hello(
-        &json!({"protocol": 1, "config": {"antigravity.home": 3}}),
+        &json!({"protocol": 1, "config": {"antigravity.binary": 3}}),
         None,
     );
     assert_eq!(core.wait_exit().code(), Some(1));

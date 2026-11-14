@@ -44,24 +44,17 @@ fn stdin_line_is_one_user_event() {
 }
 
 #[test]
-fn command_uses_the_configured_program_and_home() {
+fn command_uses_the_configured_program_and_leaves_home_alone() {
     let plain = command(&Config::default(), MODELS_ARGS);
     assert_eq!(plain.get_program(), "agy");
-    assert!(plain.get_envs().all(|(key, _)| key != "HOME"));
+    assert_eq!(plain.get_envs().count(), 0, "环境照扩展自己的原样传");
 
     let config = Config {
         binary: Some(PathBuf::from("/opt/agy/bin/agy")),
-        home: Some(PathBuf::from("/accounts/work")),
+        ..Config::default()
     };
     let set = command(&config, MODELS_ARGS);
     assert_eq!(set.get_program(), "/opt/agy/bin/agy");
     assert_eq!(set.get_args().collect::<Vec<_>>(), ["models"]);
-    let home: Vec<_> = set.get_envs().filter(|(key, _)| *key == "HOME").collect();
-    assert_eq!(
-        home,
-        [(
-            std::ffi::OsStr::new("HOME"),
-            Some(std::ffi::OsStr::new("/accounts/work"))
-        )]
-    );
+    assert_eq!(set.get_envs().count(), 0);
 }

@@ -19,6 +19,14 @@ pub fn unique() -> String {
     )
 }
 
+/// 扩展自己的家目录（`HOME`）：agy 照它跑，代理文件、agy 记的对话都在它下面。没设、空的是 `None`。
+#[must_use]
+pub fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+}
+
 /// 扩展的状态目录：`MIYU_STATE_DIR`，没设的用当前目录（核心拉起时两个是同一处）。
 ///
 /// # Errors

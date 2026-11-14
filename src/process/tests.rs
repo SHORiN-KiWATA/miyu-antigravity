@@ -77,3 +77,38 @@ fn terminate_stops_the_whole_group_even_when_term_is_ignored() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn terminate_returns_only_when_the_whole_group_is_gone() {
+    // 领头的收到 SIGTERM 就退，孙进程忽略 SIGTERM：领头的一退就该对整组 SIGKILL，回来时整组都没了（不用再等）。
+    let dir = std::env::temp_dir().join(format!("miyu-antigravity-gone-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ready = dir.join("ready");
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(r#"sh -c "trap '' TERM; while :; do sleep 1; done" & echo $! > "$1"; while :; do sleep 1; done"#)
+        .arg("sh")
+        .arg(&ready)
+        .stdin(Stdio::null());
+    let mut child = spawn(command).unwrap();
+    let group = nix::unistd::Pid::from_raw(i32::try_from(child.id()).unwrap());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while std::fs::read_to_string(&ready).map_or(true, |text| text.trim().is_empty()) {
+        assert!(Instant::now() < deadline, "子进程没写进程号");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let started = Instant::now();
+    terminate(&mut child, Duration::from_secs(10));
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "领头的退了就不再等宽限：{:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        nix::sys::signal::killpg(group, None),
+        Err(nix::errno::Errno::ESRCH),
+        "回来时整组都没了"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -16,7 +16,7 @@ driver = "antigravity/antigravity"
 chat = "agy/gemini-3.8-flash-low"
 ```
 
-两个配置项在设置页「软件包」里填：`antigravity.binary`（agy 在哪，空着在 `PATH` 里找）、`antigravity.home`
-（用哪个家目录跑 agy，登录在它的 `.gemini` 里；空着用真的家目录）。
+配置项在设置页「软件包」里填：`antigravity.binary`（agy 在哪，空着在 `PATH` 里找）。用哪个账号不归本包管：agy 照
+Miyu 拉起扩展时的 `HOME` 跑，用的是那个家目录下 `.gemini` 里的登录。
 
 许可证：AGPL-3.0-or-later。

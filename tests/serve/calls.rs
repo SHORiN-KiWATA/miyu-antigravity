@@ -112,7 +112,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
         format!("sha256:{}", hex(&Sha256::digest(stdin.as_bytes())))
     );
 
-    // 代理文件写在配置的家目录下。
+    // 代理文件写在扩展的 HOME 下（agy 也照它跑，见上面的 record["home"]）。
     let agent_file = core
         .home
         .join(".gemini/config/agents")
@@ -125,8 +125,8 @@ fn pong_streams_text_and_usage_and_cleans_up() {
         )
     );
     assert!(
-        !core.own_home.join(".gemini").exists(),
-        "没碰扩展自己的家目录"
+        !core.state.join(".gemini").exists(),
+        "agy 的东西只在 HOME 下"
     );
 
     // 收尾：会话文件、工作目录都删了。
