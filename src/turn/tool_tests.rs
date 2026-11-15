@@ -100,13 +100,17 @@ fn the_mcp_side_first_waits_for_the_stream_and_text_in_between_is_still_read() {
 fn only_active_mcp_steps_count_as_the_stream_side() {
     let mut turn = Turn::new("a");
     for step in [
-        tool_step("search_web", "ACTIVE"),
         tool_step("mcp_miyu_bash", "DONE"),
         tool_step("mcp_miyu_bash", "ERROR"),
-        tool_step("mcp_other_bash", "ACTIVE"),
     ] {
         assert_eq!(turn.feed(step), Fed::default());
         assert_eq!(turn.waiting(), None);
+    }
+    // 别的工具（agy 自己跑的、别的 MCP 服务的）是供应商侧工具，不算流这边（见 `hosted_tests`）。
+    for name in ["search_web", "mcp_other_bash"] {
+        let mut other = Turn::new("a");
+        other.feed(tool_step(name, "ACTIVE"));
+        assert_eq!(other.waiting(), None, "{name}");
     }
     // MCP 那边到了，流这边还没有：在等流。
     turn.tool_call(1, "bash", &json!({}));

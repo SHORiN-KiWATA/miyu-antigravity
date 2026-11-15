@@ -1,19 +1,24 @@
 //! 一轮 agy 的流 → `driver.delta` 的增量和 `driver.call` 的回答（设计第四节第 4、5 条，第八节）。纯的状态机，不碰 I/O。
 //!
 //! - `agent_response` 的 `text_delta`：一步第一次有字时开一块正文（`start {kind: "text"}`），之后交字；这一步 `DONE` 时收块；
-//!   下一个 `agent_response` 步另开一块；没有字的步不开块。
-//! - 工具步骤：名字以 [`MCP_PREFIX`] 开头、状态是 `ACTIVE` 的，记「流这边到了」；别的工具步照常往下读（AG-4 接 `search_web`）。
-//!   MCP 服务转来的那一件调用（[`Turn::tool_call`]）记「MCP 那边到了」。**两边都到了**才交一块工具调用并结束这一次（回答照常是
+//!   下一个 `agent_response` 步另开一块；没有字的步不开块。一轮里第一段正文的开头先攒着认内容策略拦截（`turn/hold.rs`）。
+//! - 工具步骤：名字以 [`MCP_PREFIX`] 开头、状态是 `ACTIVE` 的，记「流这边到了」；别的工具步（agy 自己跑了的）照实交成供应商侧
+//!   工具块（`turn/hosted.rs`）。MCP 服务转来的那一件调用（[`Turn::tool_call`]）记「MCP 那边到了」。**两边都到了**才交一块工具调用并结束这一次（回答照常是
 //!   用量，[`Fed::handed`] 带调用编号）：先后以流为准（它前面的正文都已读完），内容（名字、`arguments` 原文）以 MCP 那边为准。
 //!   只到了一边的，[`Turn::waiting`] 说在等哪一边，等多久由调用的人管（[`Turn::timeout`] 说到点了怎么办）。
 //! - `result`：`SUCCESS` 的回用量（这一次里每个 `agent_response DONE` 的 `usage` 加起来；一条都没有的不报）；不是成功的照
-//!   [`failure`] 归类。
+//!   [`failure`] 归类；正文就是拦截文案的回 `content_policy`（不管 `status`）。
 //! - `init.agent` 不是要的代理：当场结束，`unclassified`。
 
 use serde_json::{Value, json};
 
 use crate::failure::{self, Class};
 use crate::stream::{Event, ToolState, Usage};
+
+mod hold;
+mod hosted;
+
+pub use hosted::{OUTCOME_LIMIT, cut};
 
 /// agy 里 Miyu 的 MCP 工具的名字前缀（`mcp_<服务名>_<工具名>`，服务名见 [`crate::mcp_config::SERVER`]）。
 pub const MCP_PREFIX: &str = "mcp_miyu_";
@@ -38,6 +43,10 @@ pub struct Turn {
     mcp: Option<Held>,
     /// 已经交回了一件工具调用。
     handed: bool,
+    /// 攒着的正文开头、认出的拦截文案。
+    hold: hold::Hold,
+    /// 开着的供应商侧工具块。
+    hosting: hosted::Hosting,
 }
 
 /// MCP 那边到了的一件调用：编号、名字、`arguments` 的 JSON 原文。
@@ -83,6 +92,8 @@ impl Turn {
             stream_tool: false,
             mcp: None,
             handed: false,
+            hold: hold::Hold::default(),
+            hosting: hosted::Hosting::default(),
         }
     }
 
@@ -128,12 +139,14 @@ impl Turn {
             }
             Event::Result(outcome) => {
                 self.conversation = self.conversation.take().or(outcome.conversation_id.clone());
-                if outcome.succeeded() {
-                    if let Some((_, index)) = self.open.take() {
-                        fed.deltas.push(json!({"end": {"index": index}}));
-                    }
+                if let Some(shown) = self.policy_blocked(&outcome) {
+                    fed.answer = Some(failed(Class::ContentPolicy, &hold::block_message(&shown)));
+                } else if outcome.succeeded() {
+                    self.close_open(&mut fed.deltas);
                     fed.answer = Some(self.usage_answer());
                 } else {
+                    self.release_held(&mut fed.deltas);
+                    self.close_hosted(&mut fed.deltas);
                     let error = outcome.error.clone().unwrap_or_default();
                     let said = format!("{error}\n{}", self.errors.join("\n"));
                     let detail = [
@@ -152,9 +165,12 @@ impl Turn {
                 }
             }
             Event::Tool(step) => {
-                if step.state == ToolState::Active && step.name.starts_with(MCP_PREFIX) {
+                if !step.name.starts_with(MCP_PREFIX) {
+                    self.hosted_step(&step, &mut fed.deltas);
+                } else if step.state == ToolState::Active {
                     self.stream_tool = true;
-                    return self.pair();
+                    self.close_hosted(&mut fed.deltas);
+                    self.pair(&mut fed);
                 }
             }
             Event::UserInput | Event::Ignored => {}
@@ -169,7 +185,9 @@ impl Turn {
             name: name.to_string(),
             arguments: arguments.to_string(),
         });
-        self.pair()
+        let mut fed = Fed::default();
+        self.pair(&mut fed);
+        fed
     }
 
     /// 在等哪一边；两边都没到、或者已经交回了的是 `None`。
@@ -204,23 +222,25 @@ impl Turn {
         }
     }
 
-    /// 两边都到了就交回这件工具调用。
-    fn pair(&mut self) -> Fed {
-        let mut fed = Fed::default();
+    /// 两边都到了就把这件工具调用交回，增量和回答记进 `fed`。
+    fn pair(&mut self, fed: &mut Fed) {
         if self.stream_tool && self.mcp.is_some() {
-            self.hand_back(&mut fed);
+            self.hand_back(fed);
         }
-        fed
     }
 
-    /// 收掉开着的正文块，交一块工具调用（`start`、`text`、`private`、`end`），这一次以用量结束。
+    /// 收掉开着的块（攒着的正文先交出去，正文块、供应商侧工具块都收）。
+    fn close_open(&mut self, deltas: &mut Vec<Value>) {
+        self.close_text(deltas);
+        self.close_hosted(deltas);
+    }
+
+    /// 收掉开着的块，交一块工具调用（`start`、`text`、`private`、`end`），这一次以用量结束。
     fn hand_back(&mut self, fed: &mut Fed) {
         let Some(held) = self.mcp.take() else {
             return;
         };
-        if let Some((_, index)) = self.open.take() {
-            fed.deltas.push(json!({"end": {"index": index}}));
-        }
+        self.close_open(&mut fed.deltas);
         let index = self.next_block;
         self.next_block += 1;
         self.delivered = true;
@@ -261,6 +281,8 @@ impl Turn {
         usage: Option<Usage>,
         deltas: &mut Vec<Value>,
     ) {
+        self.close_hosted(deltas);
+        self.leave_held_step(step_index, deltas);
         if let Some((step, index)) = self.open
             && step != step_index
         {
@@ -268,33 +290,23 @@ impl Turn {
             self.open = None;
         }
         if let Some(text) = text.filter(|text| !text.is_empty()) {
-            let index = if let Some((_, index)) = self.open {
-                index
-            } else {
-                let index = self.next_block;
-                self.next_block += 1;
-                self.open = Some((step_index, index));
-                self.delivered = true;
-                deltas.push(json!({"start": {"index": index, "kind": "text"}}));
-                index
-            };
-            for piece in pieces(&text, TEXT_PIECE) {
-                deltas.push(json!({"text": {"index": index, "text": piece}}));
-            }
+            self.text(step_index, text, deltas);
         }
         if done {
             if let Some(usage) = usage {
                 self.usage = Some(self.usage.map_or(usage, |sum| sum.plus(usage)));
             }
-            if let Some((_, index)) = self.open.take() {
-                deltas.push(json!({"end": {"index": index}}));
-            }
+            self.close_text(deltas);
         }
     }
 
-    /// 流断了、没等到 `result`（agy 退出了、读不下去了）：`why` 是英文的一句原因。回答照 [`failure`] 归类。
+    /// 流断了、没等到 `result`（agy 退出了、读不下去了）：`why` 是英文的一句原因。回答照 [`failure`] 归类；认出了拦截文案的是
+    /// `content_policy`。攒着没交的字先由 [`Turn::flush`] 交掉再调它（交过增量才算交过）。
     #[must_use]
     pub fn broken(&self, why: &str) -> Value {
+        if let Some(shown) = self.blocked_text() {
+            return failed(Class::ContentPolicy, &hold::block_message(shown));
+        }
         let mut message = why.to_string();
         if !self.errors.is_empty() {
             message.push_str(": ");
@@ -336,6 +348,10 @@ fn pieces(text: &str, limit: usize) -> Vec<&str> {
     pieces
 }
 
+#[cfg(test)]
+mod hold_tests;
+#[cfg(test)]
+mod hosted_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

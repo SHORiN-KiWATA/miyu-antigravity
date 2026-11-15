@@ -45,3 +45,33 @@ fn error_is_cut_to_500_chars() {
     assert_eq!(error(Class::Auth, "x")["class"], "auth");
     assert_eq!(error(Class::Unclassified, "x")["message"], "x");
 }
+
+#[test]
+fn policy_start_tells_the_block_notice_from_other_text() {
+    let block = "The prompt could not be submitted. The prompt contains sensitive words that violate Google's [Generative AI Prohibited Use policy](https://policies.google.com/terms/generative-ai/use-policy).";
+    assert_eq!(policy_start(block), Policy::Block);
+    assert_eq!(
+        policy_start("  \n THE PROMPT COULD NOT BE SUBMITTED"),
+        Policy::Block
+    );
+    // 还写不全的开头：要等。
+    for head in [
+        "",
+        " ",
+        "T",
+        "The prompt",
+        "the prompt could not be submitte",
+    ] {
+        assert_eq!(policy_start(head), Policy::Maybe, "{head:?}");
+    }
+    // 前半一样、后面不一样的，和不相干的字。
+    for other in [
+        "The prompt could not be found",
+        "The prompt is",
+        "Sure. The prompt could not be submitted.",
+        "pong",
+        "X",
+    ] {
+        assert_eq!(policy_start(other), Policy::No, "{other:?}");
+    }
+}

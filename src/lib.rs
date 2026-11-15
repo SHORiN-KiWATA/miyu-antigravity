@@ -9,11 +9,13 @@
 //!
 //! 做成库加一个薄的 `main`：集成测试要直接用套接字服务端（[`bridge`]）扮扩展。
 //!
-//! 这一版是施工 AG-3 下：一次调用带工具时，agy 经 MCP 服务调 Miyu 的工具，扩展把它当工具调用交回核心（总台 [`hub`]），下一次请求
-//! 带着结果来再回给 agy；agy 的原生工具全关。
+//! 这一版是施工 AG-4：一次调用带工具时，agy 经 MCP 服务调 Miyu 的工具，扩展把它当工具调用交回核心（总台 [`hub`]），下一次请求
+//! 带着结果来再回给 agy；agy 的原生工具只开 `search_web`，流里 agy 自己跑的工具照实交成供应商侧工具块，结果从 agy 的转录
+//! （[`brain`]）读；正文是 Google 内容策略拦截文案的回 `content_policy`（[`failure`]）。
 
 pub mod agent;
 pub mod agy;
+pub mod brain;
 pub mod bridge;
 pub mod call;
 pub mod config;

@@ -44,6 +44,13 @@ lines、子进程号），FAKE_SAMPLES 是真样本的目录。
   ("speak",)                        等到 $FAKE_RECORD/speak 这个文件出现，再自己发那一步的 ERROR（MCP 调用超时）、一段正文、result，
                                     然后往标准输出塞一兆字节的垃圾行（管道只有 64 KiB：写完说明前面的行扩展都读走了），记 spoke，挂住
   ("hold",)                         挂住不动
+  ("chunks", [字, …])               一步正文：每段字一条 ACTIVE，最后 DONE（带用量）
+  ("native", 名, 参数, 怎么演, 字, 延迟)  agy 自己跑的原生工具（不带 mcp_miyu_ 前缀），延迟是写转录晚几秒（缺省 0）：
+      "transcript"  ACTIVE、DONE（不带 output），延迟以后往转录里写一行（照真样本：两行时间加字）
+      "silent"      ACTIVE、DONE，转录里一直不写
+      "output"      ACTIVE、DONE 带 output=字；转录里另写一行别的字（证明流里的优先）
+      "error"       ACTIVE、ERROR（tool_info.error.message 是字）
+      "done-only"   只有 DONE（不带 output），转录里写一行
 """
 
 import json
@@ -54,6 +61,9 @@ import sys
 import threading
 import time
 import uuid
+
+sys.dont_write_bytecode = True  # 别在 tests/ 下留 __pycache__
+import fake_agy_plans  # noqa: E402（和本文件同一个目录）
 
 MODE = sys.argv[1]
 ARGS = sys.argv[2:]
@@ -179,28 +189,7 @@ if MIYU:
     record["calls"] = []
     record["replies"] = []
 
-PLAN_CALL = ("call", "bash", {"command": "ls -l", "n": 2})
-PLANS = {
-    # 一件工具调用走完；之后新的一轮照 echo。
-    "one": [[[("text", "Let me look. "), PLAN_CALL, ("text", "Listing received.")], [("echo",)]]],
-    # 连着两件。
-    "two": [[[PLAN_CALL, ("call", "read", {"path": "a.txt"}), ("text", "both done")]]],
-    # 第一个进程调一件工具；重放起的新进程只说一句。
-    "replay": [[[("text", "Let me look. "), PLAN_CALL, ("text", "after")]], [[("text", "replayed")]]],
-    # 挂着时自己说话：等 speak 文件出现再发 ERROR 加正文。
-    "speaks": [[[("text", "Let me look. "), ("callnw", "bash", {"command": "ls"}), ("speak",)]], [[("text", "replayed")]]],
-    # 只发工具步 ACTIVE，不调。
-    "stream-only": [[[("text", "Let me look. "), ("active", "bash", {"command": "ls"}), ("hold",)]]],
-    # 只调，不发工具步 ACTIVE。
-    "mcp-only": [[[("text", "Let me look. "), ("mcp-only", "bash", {"command": "ls"}), ("text", "done")]]],
-    # 先调、后发 ACTIVE。
-    "mcp-first": [[[("text", "Let me look. "), ("call-mcp-first", "bash", {"command": "ls"}), ("text", "done")]]],
-    # 第一个进程连着两件工具；第二个进程（另一段对话）挂住。
-    "two-then-hold": [
-        [[PLAN_CALL, ("call", "read", {"path": "a.txt"}), ("text", "both done")]],
-        [[("hold",)]],
-    ],
-}
+PLANS = fake_agy_plans.PLANS
 
 
 FIRST = True
@@ -308,6 +297,50 @@ def call_tool(name, arguments, active, wait):
         call_step(name, "DONE", output=text)
 
 
+def write_transcript(index, content):
+    """照真样本往 agy 的转录里添一行：同一个 step_index、content 是两行时间加字。"""
+    path = os.path.join(base, "brain", CONVERSATION, ".system_generated", "logs", "transcript_full.jsonl")
+    row = {
+        "step_index": index,
+        "source": "MODEL",
+        "type": "GENERIC",
+        "status": "DONE",
+        "created_at": "2026-11-14T12:19:37Z",
+        "content": "Created At: 2026-11-14T21:19:37+09:00\nCompleted At: 2026-11-14T21:19:43+09:00\n" + content,
+    }
+    with open(path, "a") as file:
+        file.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def later(delay, function):
+    """delay 秒以后在另一个线程里做 function；0 就现在做。"""
+    if delay > 0:
+        threading.Timer(delay, function).start()
+    else:
+        function()
+
+
+def native(name, parameters, how, payload, delay):
+    """agy 自己跑的原生工具一步。"""
+    index = next_step()
+    info = {"name": name, "parameters": parameters}
+
+    def tool(state, **extra):
+        step(index, state, "tool", tool_name=name, tool_info=dict(info, **extra))
+
+    if how != "done-only":
+        tool("ACTIVE")
+    if how == "error":
+        tool("ERROR", error={"type": "tool_error", "message": payload})
+    elif how == "output":
+        tool("DONE", output=payload)
+        write_transcript(index, "TRANSCRIPT-LOSES")
+    else:
+        tool("DONE")
+        if how != "silent":
+            later(delay, lambda: write_transcript(index, payload))
+
+
 def run_plan(turns):
     init()
     step(0, "DONE", "user_input")
@@ -317,6 +350,13 @@ def run_plan(turns):
             index = next_step()
             step(index, "ACTIVE", "agent_response", text_delta=item[1])
             step(index, "DONE", "agent_response", usage=USAGE)
+        elif kind == "chunks":
+            index = next_step()
+            for chunk in item[1]:
+                step(index, "ACTIVE", "agent_response", text_delta=chunk)
+            step(index, "DONE", "agent_response", usage=USAGE)
+        elif kind == "native":
+            native(item[1], item[2], item[3], item[4], item[5] if len(item) > 5 else 0)
         elif kind == "echo":
             index = next_step()
             step(index, "ACTIVE", "agent_response", text_delta="echo: ")

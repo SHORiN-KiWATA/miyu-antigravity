@@ -2,22 +2,28 @@
 //! （[`stream`]），照 [`Turn`] 交增量，读到 `result` 或者交回一件工具调用为止（设计第四节第 4、5 条）。复用的进程这一轮不发
 //! `init`，不等它。
 //!
+//! agy 自己跑的工具（`search_web`）：`DONE` 了、流里没带结果的，这里先读 agy 的转录（[`crate::brain`]）把结果填进这一步再喂给
+//! [`Turn`]（状态机是纯的，不碰 I/O）。读转录最多等 1 秒，这期间这个循环停着，不拿着任何锁；`driver.cancel` 最多因此晚 1 秒生效。
+//!
 //! 工具调用有两边：流里的工具步 `ACTIVE` 和 MCP 服务转来的 `tools/call`（[`Signal::ToolCall`]），谁先到都可能。第一边到了就开始
 //! 掐表（[`PAIR_WAIT`]），到点还没等到另一边就照 [`Turn::timeout`]。等的时候流里来了别的事照常处理。
 
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use super::{Signal, cancelled};
+use crate::brain;
 use crate::bridge::Reply;
 use crate::hub::McpCall;
 use crate::live::{Live, Pending};
 use crate::process::{self, Line};
 use crate::rpc::Out;
 use crate::stream;
-use crate::turn::{Fed, Turn};
+use crate::stream::{ToolState, ToolStep};
+use crate::turn::{Fed, MCP_PREFIX, Turn};
 
 /// 工具调用只到了一边时等另一边多久（设计第四节第 4 条）。
 pub const PAIR_WAIT: Duration = Duration::from_secs(10);
@@ -73,9 +79,13 @@ pub fn talk(
     start: impl FnOnce() -> Result<(), String>,
 ) -> Ended {
     live.route(sender.clone());
+    let source = Transcripts {
+        home: live.home().to_path_buf(),
+        conversation: live.conversation().map(str::to_string),
+    };
     let ended = match start() {
-        Ok(()) => listen(out, call, turn, signals),
-        Err(why) => Ended::Silent(turn.broken(&why)),
+        Ok(()) => listen(out, call, turn, signals, &source),
+        Err(why) => Ended::Silent(broken(out, call, turn, &why)),
     };
     live.unroute();
     if matches!(ended, Ended::Handed(..)) {
@@ -100,8 +110,57 @@ pub fn write_input(live: &Live, input: String) -> impl FnOnce() -> Result<(), St
     }
 }
 
+/// 去哪读 agy 的转录：它跑在哪个家目录下，和（复用的进程这一轮不发 `init`）`Live` 记着的对话编号。
+struct Transcripts {
+    home: PathBuf,
+    conversation: Option<String>,
+}
+
+impl Transcripts {
+    /// 一步 agy 自己跑完了的工具（`DONE`、不是 Miyu 的 MCP 工具）、流里没带结果的：从转录读结果填进去。读不到的照样，由状态机
+    /// 只收块、不交结果。对话编号先看这一轮的 `init`，没有的用 `Live` 里的。
+    fn fill(&self, call: &str, turn: &Turn, step: &mut ToolStep) {
+        let missing = step.output.as_deref().is_none_or(str::is_empty);
+        if step.state != ToolState::Done || step.name.starts_with(MCP_PREFIX) || !missing {
+            return;
+        }
+        let Some(conversation) = turn.conversation().or(self.conversation.as_deref()) else {
+            eprintln!(
+                "call {call}: agy ran {} but its conversation id is unknown; no result to hand back",
+                step.name
+            );
+            return;
+        };
+        step.output = brain::read_waiting(
+            &self.home,
+            conversation,
+            step.step_index,
+            brain::WAIT,
+            brain::POLL,
+        );
+        if step.output.is_none() {
+            eprintln!(
+                "call {call}: agy's transcript has no result for step {} ({}); handing back the block without one",
+                step.step_index, step.name
+            );
+        }
+    }
+}
+
+/// 流断了、没有 `result`：攒着没交的字先交掉，再给照 [`Turn::broken`] 归的回答。
+fn broken(out: &Out, call: &str, turn: &mut Turn, why: &str) -> Value {
+    deliver(out, call, turn.flush());
+    turn.broken(why)
+}
+
 /// 读到这一轮有回答、或者交回了一件工具调用为止。
-fn listen(out: &Out, call: &str, turn: &mut Turn, signals: &Receiver<Signal>) -> Ended {
+fn listen(
+    out: &Out,
+    call: &str,
+    turn: &mut Turn,
+    signals: &Receiver<Signal>,
+    source: &Transcripts,
+) -> Ended {
     let mut heard = false;
     let mut held: Option<(u64, Reply)> = None;
     let mut deadline: Option<Instant> = None;
@@ -121,7 +180,10 @@ fn listen(out: &Out, call: &str, turn: &mut Turn, signals: &Receiver<Signal>) ->
             },
         };
         let why = match signal {
-            Signal::Cancel => return Ended::Answer(cancelled()),
+            Signal::Cancel => {
+                deliver(out, call, turn.flush());
+                return Ended::Answer(cancelled());
+            }
             Signal::ToolCall(McpCall {
                 n,
                 name,
@@ -147,9 +209,10 @@ fn listen(out: &Out, call: &str, turn: &mut Turn, signals: &Receiver<Signal>) ->
             Signal::Line(Line::Text(text)) => {
                 heard = true;
                 match stream::parse(&text) {
-                    Ok(event) => {
-                        if let stream::Event::Tool(step) = &event {
+                    Ok(mut event) => {
+                        if let stream::Event::Tool(step) = &mut event {
                             eprintln!("call {call}: agy {}", step.describe());
+                            source.fill(call, turn, step);
                         }
                         let fed = turn.feed(event);
                         if let Some(ended) = settle(out, call, fed, &mut held) {
@@ -162,15 +225,17 @@ fn listen(out: &Out, call: &str, turn: &mut Turn, signals: &Receiver<Signal>) ->
                 continue;
             }
             Signal::Line(Line::TooLong) => {
-                return Ended::Answer(turn.broken(&format!(
-                    "agy wrote a line longer than {} bytes",
-                    process::LINE_LIMIT
-                )));
+                return Ended::Answer(broken(
+                    out,
+                    call,
+                    turn,
+                    &format!("agy wrote a line longer than {} bytes", process::LINE_LIMIT),
+                ));
             }
             Signal::ReadFailed(error) => format!("reading agy's output failed: {error}"),
             Signal::Closed => "agy exited without a result".to_string(),
         };
-        let answer = turn.broken(&why);
+        let answer = broken(out, call, turn, &why);
         return if heard {
             Ended::Answer(answer)
         } else {

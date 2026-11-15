@@ -11,9 +11,10 @@ fn hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// 系统提示词对应的代理名：`miyu-` 加 SHA-256 前 16 位。
+/// 系统提示词对应的代理名：`miyu-` 加「白名单 NUL system」的 SHA-256 前 16 位。
 fn agent_name(system: &str) -> String {
-    format!("miyu-{}", &hex(&Sha256::digest(system.as_bytes()))[..16])
+    let input = format!("search_web\0{system}");
+    format!("miyu-{}", &hex(&Sha256::digest(input.as_bytes()))[..16])
 }
 
 #[test]
@@ -121,7 +122,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
     assert_eq!(
         std::fs::read_to_string(agent_file).unwrap(),
         format!(
-            "---\nname: {agent}\ndescription: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\nmainAgent: true\nsubagent: false\ntools: []\n---\n\n{system}"
+            "---\nname: {agent}\ndescription: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\nmainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\n{system}"
         )
     );
     assert!(
@@ -152,16 +153,31 @@ fn search_read_streams_only_the_answer_text_and_sums_usage() {
     let mut core = Core::start("search", "sample:real-search-read.jsonl");
     core.call("r1", "d1", &request("s", "read the spec"));
     let got = core.collect("r1", "d1");
-    assert_eq!(
-        got.text(),
-        "NO-TOOL; the page title is \"EditorConfig Specification — EditorConfig Specification 0.17.2 documentation\".\n"
-    );
-    let starts = got
+    // AG-4：工具步交成供应商侧工具块（块 0、1，各带参数的字），正文是块 2。
+    let kinds: Vec<&Value> = got
         .deltas
         .iter()
-        .filter(|delta| delta.get("start").is_some())
-        .count();
-    assert_eq!(starts, 1, "没有字的步不开块，工具步不交");
+        .filter_map(|delta| delta.pointer("/start/kind"))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            &json!({"hosted_tool": {"name": "search_web"}}),
+            &json!({"hosted_tool": {"name": "read_url_content"}}),
+            &json!("text"),
+        ],
+        "没有字的步不开块"
+    );
+    let answer: String = got
+        .deltas
+        .iter()
+        .filter_map(|delta| delta.get("text").filter(|text| text["index"] == 2))
+        .filter_map(|text| text["text"].as_str())
+        .collect();
+    assert_eq!(
+        answer,
+        "NO-TOOL; the page title is \"EditorConfig Specification — EditorConfig Specification 0.17.2 documentation\".\n"
+    );
     assert_eq!(
         got.response["result"]["usage"],
         json!({"uncached": 7553, "cache_read": 5966, "cache_write": 0, "output": 110, "reasoning": 0})

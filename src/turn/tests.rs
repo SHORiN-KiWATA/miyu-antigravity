@@ -50,9 +50,18 @@ fn pong_is_one_text_block_and_its_usage() {
 }
 
 #[test]
-fn search_read_skips_tools_and_empty_steps_and_sums_usage() {
+fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_sums_usage() {
     let (deltas, answer, _) = run(SEARCH);
-    let mut expected = vec![json!({"start": {"index": 0, "kind": "text"}})];
+    // 两件工具各是一块供应商侧工具（没有结果：这里没人去读转录），正文在它们后面，块一块接一块。
+    let mut expected = vec![
+        json!({"start": {"index": 0, "kind": {"hosted_tool": {"name": "search_web"}}}}),
+        json!({"text": {"index": 0, "text": r#"{"query":"EditorConfig specification"}"#}}),
+        json!({"end": {"index": 0}}),
+        json!({"start": {"index": 1, "kind": {"hosted_tool": {"name": "read_url_content"}}}}),
+        json!({"text": {"index": 1, "text": r#"{"Url":"https://spec.editorconfig.org/"}"#}}),
+        json!({"end": {"index": 1}}),
+        json!({"start": {"index": 2, "kind": "text"}}),
+    ];
     for piece in [
         "NO-",
         "TOOL; the page title is \"EditorConfi",
@@ -61,10 +70,10 @@ fn search_read_skips_tools_and_empty_steps_and_sums_usage() {
         "ntation\".",
         "\n",
     ] {
-        expected.push(json!({"text": {"index": 0, "text": piece}}));
+        expected.push(json!({"text": {"index": 2, "text": piece}}));
     }
-    expected.push(json!({"end": {"index": 0}}));
-    assert_eq!(deltas, expected, "步 1、3 没有字，不开块；工具步不管");
+    expected.push(json!({"end": {"index": 2}}));
+    assert_eq!(deltas, expected, "步 1、3 没有字，不开块");
     // 三个 DONE 的用量加起来，不是 result 的累计。
     assert_eq!(
         answer,

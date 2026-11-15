@@ -4,12 +4,15 @@
 //! - `failures`：取消、出错归类、往坏里测（夹着不是 JSON 的行、超长的一行、代理对不上、不读标准输入）、配置。
 //! - `turns`：同一段对话的下一轮接在活着的 agy 上，认不上的新开。
 //! - `tool_calls`、`tool_replay`、`tool_edges`（共用 `tool_rig`）：带工具的调用：交回、带结果来、重放、时限、取消和退出。
+//! - `hosted`：agy 自己跑的工具（`search_web`）交成供应商侧工具块、结果读转录；内容策略拦截。
 //! - `teardown`：作废（出错、取消、流断了）和回收（agy 自己退了、闲置到点、超过 4 段、扩展退出、旧的代理目录）。
 
 #[cfg(test)]
 mod calls;
 #[cfg(test)]
 mod failures;
+#[cfg(test)]
+mod hosted;
 #[cfg(test)]
 mod support;
 #[cfg(test)]

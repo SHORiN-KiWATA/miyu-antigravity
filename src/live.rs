@@ -146,6 +146,18 @@ impl Live {
         self.child.id()
     }
 
+    /// agy 这段对话的编号；还不知道的是 `None`。
+    #[must_use]
+    pub fn conversation(&self) -> Option<&str> {
+        self.conversation.as_deref()
+    }
+
+    /// 它跑在哪个家目录下（agy 的转录在这里）。
+    #[must_use]
+    pub fn home(&self) -> &std::path::Path {
+        &self.home
+    }
+
     /// 记下 agy 这段对话的编号（收尾时删它的文件）。
     pub fn set_conversation(&mut self, conversation: &str) {
         self.conversation = Some(conversation.to_string());
