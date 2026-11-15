@@ -417,17 +417,25 @@ pub fn wait_gone(pid: i64) {
     }
 }
 
-/// agy 那边这段对话的文件都没了。
+/// agy 那边这段对话的文件都没了。进程没了以后扩展才删文件（`Live` 收尾时先收进程、后删文件），所以等到没了为止，
+/// 到点还在的才算错。
 pub fn assert_conversation_removed(home: &Path, conversation: &str) {
     let base = home.join(".gemini/antigravity-cli");
-    for suffix in [".db", ".db-shm", ".db-wal"] {
-        let file = base
-            .join("conversations")
-            .join(format!("{conversation}{suffix}"));
-        assert!(!file.exists(), "{} 还在", file.display());
+    let mut paths: Vec<_> = [".db", ".db-shm", ".db-wal"]
+        .iter()
+        .map(|suffix| {
+            base.join("conversations")
+                .join(format!("{conversation}{suffix}"))
+        })
+        .collect();
+    paths.push(base.join("brain").join(conversation));
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let left: Vec<_> = paths.iter().filter(|path| path.exists()).collect();
+        if left.is_empty() {
+            return;
+        }
+        assert!(Instant::now() < deadline, "还在：{left:?}");
+        std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(
-        !base.join("brain").join(conversation).exists(),
-        "brain/{conversation} 还在"
-    );
 }
