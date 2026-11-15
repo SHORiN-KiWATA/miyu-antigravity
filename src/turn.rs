@@ -2,7 +2,10 @@
 //!
 //! - `agent_response` 的 `text_delta`：一步第一次有字时开一块正文（`start {kind: "text"}`），之后交字；这一步 `DONE` 时收块；
 //!   下一个 `agent_response` 步另开一块；没有字的步不开块。
-//! - 工具步骤 AG-1 不管（AG-3、AG-4 接），照常往下读。
+//! - 工具步骤：名字以 [`MCP_PREFIX`] 开头、状态是 `ACTIVE` 的，记「流这边到了」；别的工具步照常往下读（AG-4 接 `search_web`）。
+//!   MCP 服务转来的那一件调用（[`Turn::tool_call`]）记「MCP 那边到了」。**两边都到了**才交一块工具调用并结束这一次（回答照常是
+//!   用量，[`Fed::handed`] 带调用编号）：先后以流为准（它前面的正文都已读完），内容（名字、`arguments` 原文）以 MCP 那边为准。
+//!   只到了一边的，[`Turn::waiting`] 说在等哪一边，等多久由调用的人管（[`Turn::timeout`] 说到点了怎么办）。
 //! - `result`：`SUCCESS` 的回用量（这一次里每个 `agent_response DONE` 的 `usage` 加起来；一条都没有的不报）；不是成功的照
 //!   [`failure`] 归类。
 //! - `init.agent` 不是要的代理：当场结束，`unclassified`。
@@ -10,7 +13,10 @@
 use serde_json::{Value, json};
 
 use crate::failure::{self, Class};
-use crate::stream::{Event, Usage};
+use crate::stream::{Event, ToolState, Usage};
+
+/// agy 里 Miyu 的 MCP 工具的名字前缀（`mcp_<服务名>_<工具名>`，服务名见 [`crate::mcp_config::SERVER`]）。
+pub const MCP_PREFIX: &str = "mcp_miyu_";
 
 /// 一段字至多多少字节：交给核心的一行不能超过 1 MiB，字里的控制字符转义后至多六倍长。
 pub const TEXT_PIECE: usize = 128 * 1024;
@@ -26,6 +32,29 @@ pub struct Turn {
     delivered: bool,
     conversation: Option<String>,
     errors: Vec<String>,
+    /// 流这边：一步 MCP 工具步 `ACTIVE` 到了。
+    stream_tool: bool,
+    /// MCP 那边：转来的那一件调用。
+    mcp: Option<Held>,
+    /// 已经交回了一件工具调用。
+    handed: bool,
+}
+
+/// MCP 那边到了的一件调用：编号、名字、`arguments` 的 JSON 原文。
+#[derive(Debug)]
+struct Held {
+    n: u64,
+    name: String,
+    arguments: String,
+}
+
+/// 只到了一边，在等另一边。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Waiting {
+    /// 流这边到了，等 MCP 那边的调用。
+    ForMcp,
+    /// MCP 那边到了，等流这边的工具步。
+    ForStream,
 }
 
 /// 读一条以后：要交的增量，和读完了的话这一次的回答（`driver.call` 回应的 `result`）。
@@ -35,6 +64,8 @@ pub struct Fed {
     pub deltas: Vec<Value>,
     /// 这一次结束了：回答。
     pub answer: Option<Value>,
+    /// 这一次是交回一件工具调用结束的：那件调用的编号（回答是用量）。
+    pub handed: Option<u64>,
 }
 
 impl Turn {
@@ -49,6 +80,9 @@ impl Turn {
             delivered: false,
             conversation: None,
             errors: Vec::new(),
+            stream_tool: false,
+            mcp: None,
+            handed: false,
         }
     }
 
@@ -98,16 +132,7 @@ impl Turn {
                     if let Some((_, index)) = self.open.take() {
                         fed.deltas.push(json!({"end": {"index": index}}));
                     }
-                    fed.answer = Some(match self.usage {
-                        Some(usage) => json!({"usage": {
-                            "uncached": usage.input,
-                            "cache_read": usage.cache_read,
-                            "cache_write": 0,
-                            "output": usage.output,
-                            "reasoning": usage.thinking,
-                        }}),
-                        None => json!({}),
-                    });
+                    fed.answer = Some(self.usage_answer());
                 } else {
                     let error = outcome.error.clone().unwrap_or_default();
                     let said = format!("{error}\n{}", self.errors.join("\n"));
@@ -126,9 +151,105 @@ impl Turn {
                     ));
                 }
             }
-            Event::UserInput | Event::Tool(_) | Event::Ignored => {}
+            Event::Tool(step) => {
+                if step.state == ToolState::Active && step.name.starts_with(MCP_PREFIX) {
+                    self.stream_tool = true;
+                    return self.pair();
+                }
+            }
+            Event::UserInput | Event::Ignored => {}
         }
         fed
+    }
+
+    /// MCP 那边到了：调用 `n`，工具名 `name`（MCP 收到的原样），参数 `arguments`。`reply` 不进状态机，由调用的人拿着。
+    pub fn tool_call(&mut self, n: u64, name: &str, arguments: &Value) -> Fed {
+        self.mcp = Some(Held {
+            n,
+            name: name.to_string(),
+            arguments: arguments.to_string(),
+        });
+        self.pair()
+    }
+
+    /// 在等哪一边；两边都没到、或者已经交回了的是 `None`。
+    #[must_use]
+    pub fn waiting(&self) -> Option<Waiting> {
+        if self.handed {
+            return None;
+        }
+        match (self.stream_tool, self.mcp.is_some()) {
+            (true, false) => Some(Waiting::ForMcp),
+            (false, true) => Some(Waiting::ForStream),
+            _ => None,
+        }
+    }
+
+    /// 等另一边等到点了：只有 MCP 那边到了的照交；只有流那边到了的这一次出错（agy 的工具服务没连上 Miyu）。没在等的什么都不做。
+    pub fn timeout(&mut self) -> Fed {
+        match self.waiting() {
+            Some(Waiting::ForStream) => {
+                let mut fed = Fed::default();
+                self.hand_back(&mut fed);
+                fed
+            }
+            Some(Waiting::ForMcp) => Fed {
+                answer: Some(failed(
+                    Class::Unclassified,
+                    "agy called a Miyu tool, but its tool server never reached Miyu; check that the miyu entry in mcp_config.json under agy's configuration folder starts miyu-antigravity mcp",
+                )),
+                ..Fed::default()
+            },
+            None => Fed::default(),
+        }
+    }
+
+    /// 两边都到了就交回这件工具调用。
+    fn pair(&mut self) -> Fed {
+        let mut fed = Fed::default();
+        if self.stream_tool && self.mcp.is_some() {
+            self.hand_back(&mut fed);
+        }
+        fed
+    }
+
+    /// 收掉开着的正文块，交一块工具调用（`start`、`text`、`private`、`end`），这一次以用量结束。
+    fn hand_back(&mut self, fed: &mut Fed) {
+        let Some(held) = self.mcp.take() else {
+            return;
+        };
+        if let Some((_, index)) = self.open.take() {
+            fed.deltas.push(json!({"end": {"index": index}}));
+        }
+        let index = self.next_block;
+        self.next_block += 1;
+        self.delivered = true;
+        self.handed = true;
+        fed.deltas
+            .push(json!({"start": {"index": index, "kind": {"tool_call": {"name": held.name}}}}));
+        for piece in pieces(&held.arguments, TEXT_PIECE) {
+            fed.deltas
+                .push(json!({"text": {"index": index, "text": piece}}));
+        }
+        fed.deltas
+            .push(json!({"private": {"index": index, "data": {"mcp": held.n}}}));
+        fed.deltas.push(json!({"end": {"index": index}}));
+        fed.answer = Some(self.usage_answer());
+        fed.handed = Some(held.n);
+    }
+
+    /// 回答：这一次各个 `agent_response DONE` 加起来的用量；一条都没有的是空的。
+    fn usage_answer(&self) -> Value {
+        match self.usage {
+            Some(usage) => json!({"usage": {
+                "uncached": usage.input,
+                "cache_read": usage.cache_read,
+                "cache_write": 0,
+                "output": usage.output,
+                "reasoning": usage.thinking,
+            }}),
+            None => json!({}),
+        }
     }
 
     /// 读一条 `agent_response`：开块、交字、`DONE` 时记用量、收块。
@@ -217,3 +338,5 @@ fn pieces(text: &str, limit: usize) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tool_tests;
