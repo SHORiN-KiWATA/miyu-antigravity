@@ -25,6 +25,25 @@ lines、子进程号），FAKE_SAMPLES 是真样本的目录。
   hang-second          第一轮照 echo，第二轮起一个 sleep 子进程、挂住
   die-second           第一轮照 echo，第二轮交一段字以后退出（退出码 1）
   quit-second          第一轮照 echo，第二轮一行不写就退出
+  plan:<名字>          照 PLANS 里的剧本演（带工具的：见下）
+
+带工具：启动时读 $HOME/.gemini/config/mcp_config.json，有 mcpServers.miyu 就照它的 command、args 起 MCP 服务（环境变量原样
+传下去，和假 agy 同一个进程组，所以 SIGTERM、SIGKILL 一起收），照真 agy 1.4.0 的握手顺序握手（tests/mcp/handshake.rs），把 tools/list
+的结果写到 $FAKE_RECORD/<pid>.tools（不叫 .json：records() 只认 .json 的记录）。读 MCP 服务的回话在单独的线程里，主线程等回话时
+照样能被信号杀掉。记录里另有 mcp_pid、bridge_env（环境里有哪几个桥的变量）、calls（发出的 tools/call）、replies（收到的回话）。
+
+剧本（PLANS）：名字 → 几个进程各自的演法（第几个起的进程用第几份，多了的用最后一份）→ 每一轮（标准输入的一行）的步子（一轮
+的步子演完发 result；多出来的轮用最后一份）。工具结果回来是同一轮接着演，不新开一轮。步子：
+  ("text", 字)                      一步正文：ACTIVE 带字，DONE 带用量
+  ("echo",)                         同 echo 演法
+  ("call", 名, 参数)                工具步 ACTIVE 再 tools/call，等回话（记进 replies），再发 DONE
+  ("call-mcp-first", 名, 参数)      先 tools/call，隔一会儿才发 ACTIVE，再等回话、发 DONE
+  ("callnw", 名, 参数)              ACTIVE 再 tools/call，不等回话
+  ("active", 名, 参数)              只发 ACTIVE，不调
+  ("mcp-only", 名, 参数)            只调 tools/call（不发 ACTIVE），等回话
+  ("speak",)                        等到 $FAKE_RECORD/speak 这个文件出现，再自己发那一步的 ERROR（MCP 调用超时）、一段正文、result，
+                                    然后往标准输出塞一兆字节的垃圾行（管道只有 64 KiB：写完说明前面的行扩展都读走了），记 spoke，挂住
+  ("hold",)                         挂住不动
 """
 
 import json
@@ -32,6 +51,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -86,6 +106,101 @@ if MODE == "stubborn":
 def out(event):
     sys.stdout.write(json.dumps(event) + "\n")
     sys.stdout.flush()
+
+
+class Mcp:
+    """假 agy 里的 MCP 客户端：起 MCP 服务、握手、tools/list、tools/call。"""
+
+    def __init__(self, command, args):
+        self.proc = subprocess.Popen(
+            [command] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=os.environ.copy(), text=True, bufsize=1
+        )
+        self.replies = {}
+        self.cond = threading.Condition()
+        self.next_id = 0
+        threading.Thread(target=self.read, daemon=True).start()
+
+    def read(self):
+        for line in self.proc.stdout:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            with self.cond:
+                self.replies[message.get("id")] = message
+                self.cond.notify_all()
+
+    def send(self, message):
+        self.proc.stdin.write(json.dumps(message) + "\n")
+        self.proc.stdin.flush()
+
+    def request(self, method, params):
+        self.next_id += 1
+        self.send({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params})
+        return self.next_id
+
+    def notify(self, method):
+        self.send({"jsonrpc": "2.0", "method": method})
+
+    def wait(self, request_id, timeout=60):
+        deadline = time.time() + timeout
+        with self.cond:
+            while request_id not in self.replies:
+                left = deadline - time.time()
+                if left <= 0:
+                    return None
+                self.cond.wait(left)
+            return self.replies.pop(request_id)
+
+    def ask(self, method, params):
+        return self.wait(self.request(method, params))
+
+
+MCP = None
+TOOLS = None
+record["bridge_env"] = [k for k in ("MIYU_ANTIGRAVITY_BRIDGE", "MIYU_ANTIGRAVITY_TOKEN") if k in os.environ]
+try:
+    with open(os.path.join(HOME, ".gemini", "config", "mcp_config.json")) as file:
+        MIYU = json.load(file).get("mcpServers", {}).get("miyu")
+except (OSError, ValueError):
+    MIYU = None
+if MIYU:
+    MCP = Mcp(MIYU["command"], MIYU.get("args", []))
+    record["mcp_pid"] = MCP.proc.pid
+    # 真 agy 1.4.0 的顺序：server/discover（不认识）、roots 通知、initialize、initialized 通知、tools/list。
+    MCP.ask("server/discover", {})
+    MCP.notify("notifications/roots/list_changed")
+    MCP.ask("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "agy"}})
+    MCP.notify("notifications/initialized")
+    listed = MCP.ask("tools/list", {})
+    TOOLS = listed["result"]
+    with open(os.path.join(RECORD, "%d.tools" % os.getpid()), "w") as file:
+        json.dump(TOOLS, file)
+    record["calls"] = []
+    record["replies"] = []
+
+PLAN_CALL = ("call", "bash", {"command": "ls -l", "n": 2})
+PLANS = {
+    # 一件工具调用走完；之后新的一轮照 echo。
+    "one": [[[("text", "Let me look. "), PLAN_CALL, ("text", "Listing received.")], [("echo",)]]],
+    # 连着两件。
+    "two": [[[PLAN_CALL, ("call", "read", {"path": "a.txt"}), ("text", "both done")]]],
+    # 第一个进程调一件工具；重放起的新进程只说一句。
+    "replay": [[[("text", "Let me look. "), PLAN_CALL, ("text", "after")]], [[("text", "replayed")]]],
+    # 挂着时自己说话：等 speak 文件出现再发 ERROR 加正文。
+    "speaks": [[[("text", "Let me look. "), ("callnw", "bash", {"command": "ls"}), ("speak",)]], [[("text", "replayed")]]],
+    # 只发工具步 ACTIVE，不调。
+    "stream-only": [[[("text", "Let me look. "), ("active", "bash", {"command": "ls"}), ("hold",)]]],
+    # 只调，不发工具步 ACTIVE。
+    "mcp-only": [[[("text", "Let me look. "), ("mcp-only", "bash", {"command": "ls"}), ("text", "done")]]],
+    # 先调、后发 ACTIVE。
+    "mcp-first": [[[("text", "Let me look. "), ("call-mcp-first", "bash", {"command": "ls"}), ("text", "done")]]],
+    # 第一个进程连着两件工具；第二个进程（另一段对话）挂住。
+    "two-then-hold": [
+        [[PLAN_CALL, ("call", "read", {"path": "a.txt"}), ("text", "both done")]],
+        [[("hold",)]],
+    ],
+}
 
 
 FIRST = True
@@ -144,6 +259,108 @@ def echo():
     result(response="echo: " + TEXT[-12:])
 
 
+
+def life_number():
+    """第几个起的假 agy（从 0 起）：记录目录里抢一个 life-N 文件。"""
+    number = 0
+    while True:
+        try:
+            os.close(os.open(os.path.join(RECORD, "life-%d" % number), os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return number
+        except FileExistsError:
+            number += 1
+
+
+STEP = 0
+LAST_CALL = None
+
+
+def next_step():
+    global STEP
+    STEP += 1
+    return STEP
+
+
+def call_step(name, state, **info):
+    index = LAST_CALL["index"]
+    step(index, state, "tool", tool_name="mcp_miyu_" + name, tool_info=info)
+
+
+def call_tool(name, arguments, active, wait):
+    """工具调用：active 是发不发 ACTIVE，wait 是等不等回话（等的发 DONE）。"""
+    global LAST_CALL
+    LAST_CALL = {"index": next_step(), "name": name}
+    if active == "before":
+        call_step(name, "ACTIVE", parameters=arguments)
+    request_id = MCP.request("tools/call", {"name": name, "arguments": arguments})
+    record["calls"].append({"name": name, "arguments": arguments})
+    save()
+    if active == "after":
+        time.sleep(0.2)
+        call_step(name, "ACTIVE", parameters=arguments)
+    if not wait:
+        return
+    reply = MCP.wait(request_id)
+    record["replies"].append(reply["result"] if reply and "result" in reply else reply)
+    save()
+    if active != "never":
+        text = "".join(block.get("text", "") for block in (reply or {}).get("result", {}).get("content", []))
+        call_step(name, "DONE", output=text)
+
+
+def run_plan(turns):
+    init()
+    step(0, "DONE", "user_input")
+    for item in turns[min(TURN, len(turns)) - 1]:
+        kind = item[0]
+        if kind == "text":
+            index = next_step()
+            step(index, "ACTIVE", "agent_response", text_delta=item[1])
+            step(index, "DONE", "agent_response", usage=USAGE)
+        elif kind == "echo":
+            index = next_step()
+            step(index, "ACTIVE", "agent_response", text_delta="echo: ")
+            step(index, "DONE", "agent_response", text_delta=TEXT[-12:], usage=USAGE)
+        elif kind == "call":
+            call_tool(item[1], item[2], "before", True)
+        elif kind == "call-mcp-first":
+            call_tool(item[1], item[2], "after", True)
+        elif kind == "callnw":
+            call_tool(item[1], item[2], "before", False)
+        elif kind == "active":
+            index = next_step()
+            step(index, "ACTIVE", "tool", tool_name="mcp_miyu_" + item[1], tool_info={"parameters": item[2]})
+        elif kind == "mcp-only":
+            call_tool(item[1], item[2], "never", True)
+        elif kind == "speak":
+            speak = os.path.join(RECORD, "speak")
+            deadline = time.time() + 60
+            while not os.path.exists(speak) and time.time() < deadline:
+                time.sleep(0.02)
+            call_step(
+                LAST_CALL["name"],
+                "ERROR",
+                error={"type": "timeout", "message": 'MCP tool call to server "miyu" timed out after 3m0s'},
+            )
+            index = next_step()
+            step(index, "ACTIVE", "agent_response", text_delta="I gave up waiting.")
+            step(index, "DONE", "agent_response", usage=USAGE)
+            result()
+            for _ in range(10):
+                sys.stdout.write("padding " * 12500 + "\n")
+                sys.stdout.flush()
+            record["spoke"] = True
+            save()
+            hold()
+        elif kind == "hold":
+            hold()
+    result()
+
+
+PLAN = None
+if MODE.startswith("plan:"):
+    lives = PLANS[MODE[len("plan:"):]]
+    PLAN = lives[min(life_number(), len(lives) - 1)]
 record["lines"] = []
 TURN = 0
 while True:
@@ -156,7 +373,9 @@ while True:
     record["turns"] = TURN
     TEXT = json.loads(line)["message"]["content"][-1]["text"]
     save()
-    if MODE.startswith("sample:"):
+    if PLAN is not None:
+        run_plan(PLAN)
+    elif MODE.startswith("sample:"):
         replay(MODE[len("sample:"):])
     elif MODE == "junk":
         replay("real-pong.jsonl", junk=True)

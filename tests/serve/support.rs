@@ -27,6 +27,9 @@ pub struct Core {
     pub home: PathBuf,
     /// 扩展的 `MIYU_STATE_DIR`。
     pub state: PathBuf,
+    /// 扩展的 `MIYU_RUNTIME_DIR`：给 MCP 服务用的套接字放在这里。Unix 套接字路径有长度上限，所以放在短的系统临时目录下，不在
+    /// 很深的 target 目录里。
+    pub runtime: PathBuf,
     /// 假 agy 写记录的目录。
     pub record: PathBuf,
     /// 假 agy 的包装脚本。
@@ -162,6 +165,12 @@ impl Core {
             std::fs::create_dir_all(&dir).unwrap();
             dir
         });
+        let runtime = std::env::temp_dir().join(format!(
+            "ag-{}-{}",
+            std::process::id(),
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::create_dir_all(&runtime).unwrap();
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let binary = bin.join("agy");
         std::fs::write(
@@ -175,6 +184,7 @@ impl Core {
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let mut command = Command::new(env!("CARGO_BIN_EXE_miyu-antigravity"));
+        command.env("MIYU_RUNTIME_DIR", &runtime);
         command.envs(env.iter().copied());
         let mut child = command
             .arg("serve")
@@ -206,6 +216,7 @@ impl Core {
             lines,
             home,
             state,
+            runtime,
             record,
             binary,
         }
@@ -392,6 +403,7 @@ impl Drop for Core {
             std::thread::sleep(Duration::from_millis(20));
         }
         std::fs::remove_dir_all(&self.root).ok();
+        std::fs::remove_dir_all(&self.runtime).ok();
     }
 }
 
