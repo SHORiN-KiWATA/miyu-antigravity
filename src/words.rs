@@ -78,3 +78,11 @@ pub fn path_attached(name: &str, path: &str) -> String {
 fn quoted(name: Option<&str>) -> String {
     name.map(|name| format!(" \"{name}\"")).unwrap_or_default()
 }
+
+/// MCP 服务答 `tools/call`：没有扩展传下来的套接字和口令（主人自己开的 agy），没法跑工具。
+pub const MCP_NO_BRIDGE: &str =
+    "This tool server is not attached to a Miyu session, so it cannot run tools.";
+
+/// MCP 服务答 `tools/call`：等的时候连不上、连接断了、扩展回了拒绝，Miyu 那一头不在了。
+pub const MCP_BRIDGE_GONE: &str =
+    "The Miyu side of this tool call is gone, so the call did not complete.";
