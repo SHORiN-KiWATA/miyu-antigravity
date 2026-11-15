@@ -15,6 +15,7 @@ fn meta(messages: &[&str], used: Instant) -> Meta {
         messages: messages.iter().map(|text| (*text).to_string()).collect(),
         agent: "miyu-a".into(),
         used,
+        pending: false,
     }
 }
 

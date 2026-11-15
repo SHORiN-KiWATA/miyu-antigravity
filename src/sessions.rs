@@ -4,6 +4,10 @@
 //! 一项是闲着（`L` 在表里）或者正在一次 `driver.call` 里（`L` 被那一次拿走了）。拿走的 [`Table::claim`]；用完了的成功交回
 //! [`Table::release`]、出了错的 [`Table::forget`]。新开的说完了才登记（[`Table::insert`]）。表里超过上限时挤掉最久没用的
 //! 闲着的；闲置到点的、进程自己退了的由巡检拿掉（[`Table::sweep`]）。
+//!
+//! 闲着的有两种：说完了的（等下一轮人的话）和**挂着的**（这一轮以交回一件工具调用结束，agy 那头还等着工具结果，
+//! [`Table::release_pending`]）。两种都留着活进程、都算在上限里；认下一步时形状不同（[`next_turn`]），闲置的上限也不同
+//! （[`Table::sweep_with`]）。一次请求以某个挂着的项记着的那串开头、却不是它的下一步的，那一项当场拿掉（[`Table::displace`]）。
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -44,17 +48,23 @@ pub struct Meta {
     pub agent: String,
     /// 上次用完的时刻。
     pub used: Instant,
+    /// 挂着：上一次请求以交回一件工具调用结束，agy 那头等着结果（记着的那串就是交回它的那一次请求的）。
+    pub pending: bool,
 }
 
-/// `incoming` 是不是 `meta` 那段对话的新的一轮：模型、两个指纹都一样；记着的那串（m 条）是这一次的（n 条）的严格前缀；
-/// 第 m 条以后依次是恰好一条 `assistant`、一条或几条 `user`。是的交 m。
+/// `incoming` 是不是 `meta` 那段对话的下一步：模型、两个指纹都一样；记着的那串（m 条）是这一次的（n 条）的严格前缀；
+/// 第 m 条以后，闲着的（说完了的）依次是恰好一条 `assistant`、一条或几条 `user`（新的一轮）；挂着的依次是恰好一条
+/// `assistant`、一条 `tool`（工具结果）。是的交 m。
 #[must_use]
 pub fn next_turn(meta: &Meta, incoming: &Incoming) -> Option<usize> {
     let known = meta.messages.len();
     let extra = incoming.roles.get(known..)?;
     let shaped = extra.first().is_some_and(|role| role == "assistant")
-        && extra.len() >= 2
-        && extra[1..].iter().all(|role| role == "user");
+        && if meta.pending {
+            extra.len() == 2 && extra[1] == "tool"
+        } else {
+            extra.len() >= 2 && extra[1..].iter().all(|role| role == "user")
+        };
     let matches = meta.identity == incoming.identity
         && incoming.messages.len() == incoming.roles.len()
         && incoming.messages.starts_with(&meta.messages);
@@ -80,6 +90,8 @@ pub struct Claimed<L> {
     pub known: usize,
     /// 代理名。
     pub agent: String,
+    /// 它是挂着的（第 m 条是交回工具调用的 assistant，第 m+1 条是它的 tool 结果），不是说完了的。
+    pub pending: bool,
 }
 
 /// 登记表。
@@ -133,12 +145,57 @@ impl<L> Table<L> {
             live,
             known: slot.meta.messages.len(),
             agent: slot.meta.agent.clone(),
+            pending: slot.meta.pending,
         })
+    }
+
+    /// 被顶掉的：`incoming` 的模型、指纹和某个**挂着的**项一样、消息以它记着的那串开头（含一模一样），却不是它的下一步
+    /// （[`next_turn`]）——人打断了工具又说了话、核心把同一次请求重发了一遍。这些项当场拿出来，交它们的活进程，由调用的人收。
+    /// 闲着的（说完了的）项不这样收。
+    pub fn displace(&mut self, incoming: &Incoming) -> Vec<L> {
+        let mut removed = Vec::new();
+        let mut index = 0;
+        while index < self.slots.len() {
+            let slot = &self.slots[index];
+            let displaced = slot.meta.pending
+                && slot.live.is_some()
+                && slot.meta.identity == incoming.identity
+                && incoming.messages.starts_with(&slot.meta.messages)
+                && next_turn(&slot.meta, incoming).is_none();
+            if displaced {
+                removed.extend(self.slots.remove(index).live);
+            } else {
+                index += 1;
+            }
+        }
+        removed
     }
 
     /// 正忙的 `id` 这一轮成功了：记下这一次的 `messages`、改回闲着、记时刻 `now`。交被挤掉的（见 [`Table::insert`]）。
     /// 不在表里的（例如已经被收掉了）原样交回 `live`，由调用的人收。
     pub fn release(&mut self, id: u64, live: L, messages: Vec<String>, now: Instant) -> Vec<L> {
+        self.settle(id, live, messages, now, false)
+    }
+
+    /// 同 [`Table::release`]，但这一轮以交回一件工具调用结束：改成挂着的（`messages` 是交回它的这一次请求的）。
+    pub fn release_pending(
+        &mut self,
+        id: u64,
+        live: L,
+        messages: Vec<String>,
+        now: Instant,
+    ) -> Vec<L> {
+        self.settle(id, live, messages, now, true)
+    }
+
+    fn settle(
+        &mut self,
+        id: u64,
+        live: L,
+        messages: Vec<String>,
+        now: Instant,
+        pending: bool,
+    ) -> Vec<L> {
         let Some(index) = self.slots.iter().position(|slot| slot.id == id) else {
             return vec![live];
         };
@@ -146,6 +203,7 @@ impl<L> Table<L> {
         let meta = Meta {
             messages,
             used: now,
+            pending,
             ..slot.meta
         };
         self.insert(meta, live)
@@ -193,13 +251,26 @@ impl<L> Table<L> {
         removed
     }
 
-    /// 巡检：拿掉闲着的、闲置超过 `keep` 的（以 `now` 算）和 `dead` 说进程没了的，交它们的活进程。
+    /// 巡检：拿掉闲着的、闲置超过 `keep` 的（以 `now` 算）和 `dead` 说进程没了的，交它们的活进程。挂着的也照 `keep` 算
+    /// （要分开算的用 [`Table::sweep_with`]）。
     pub fn sweep(&mut self, now: Instant, keep: Duration, dead: impl Fn(&L) -> bool) -> Vec<L> {
+        self.sweep_with(now, keep, keep, dead)
+    }
+
+    /// 同 [`Table::sweep`]，挂着的项（交回工具调用以后等结果的）超过 `tool_wait` 就收，说完了的闲着的项超过 `keep` 才收。
+    pub fn sweep_with(
+        &mut self,
+        now: Instant,
+        keep: Duration,
+        tool_wait: Duration,
+        dead: impl Fn(&L) -> bool,
+    ) -> Vec<L> {
         let mut removed = Vec::new();
         let mut index = 0;
         while index < self.slots.len() {
             let slot = &self.slots[index];
-            let expired = now.saturating_duration_since(slot.meta.used) >= keep;
+            let limit = if slot.meta.pending { tool_wait } else { keep };
+            let expired = now.saturating_duration_since(slot.meta.used) >= limit;
             if slot.live.as_ref().is_some_and(|live| expired || dead(live)) {
                 removed.extend(self.slots.remove(index).live);
             } else {
@@ -232,5 +303,7 @@ impl<L> Table<L> {
     }
 }
 
+#[cfg(test)]
+mod pending_tests;
 #[cfg(test)]
 mod tests;
