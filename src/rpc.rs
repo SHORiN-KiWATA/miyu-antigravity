@@ -5,7 +5,8 @@
 //! `driver.cancel`、`driver.models`、`extension.config`；不认识的请求回 `-32601`。写出去的每一行加锁、整行写、刷新。标准错误只写
 //! 日志。握手被拒、配置读不懂的退出码 1（核心不再拉起）；标准输入读到头是请退出：收掉还在跑的和留着的 agy，退出码 0。
 //!
-//! 活着的 agy 对话记在一张登记表里（[`Registry`]），一个巡检线程按 `antigravity.keep_seconds` 收闲置到点的（[`Sweeper`]）。
+//! 活着的 agy 对话记在一张登记表里（[`Registry`]），一个巡检线程按 `antigravity.keep_seconds`、`antigravity.tool_wait_seconds` 收闲置到点的
+//! （[`Sweeper`]）。握手以后起给 MCP 服务用的套接字（[`Tools`]），退出时删掉。
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -18,6 +19,7 @@ use serde_json::{Map, Value, json};
 
 use crate::call::{self, Answer, Signal};
 use crate::config::Config;
+use crate::hub::Tools;
 use crate::models;
 use crate::registry::{self, Registry, Sweeper};
 
@@ -112,6 +114,7 @@ pub fn serve(input: impl BufRead, out: &Out) -> ExitCode {
 
     let config = Arc::new(RwLock::new(config));
     let registry = Arc::new(Registry::default());
+    let tools = Arc::new(Tools::start());
     let sweeper = Sweeper::start(
         Arc::clone(&registry),
         Arc::clone(&config),
@@ -121,6 +124,7 @@ pub fn serve(input: impl BufRead, out: &Out) -> ExitCode {
         out: out.clone(),
         config,
         registry,
+        tools,
         sweeper,
         calls: Arc::new(Mutex::new(HashMap::new())),
         threads: Vec::new(),
@@ -155,6 +159,8 @@ struct Server {
     config: Arc<RwLock<Config>>,
     /// 活着的 agy 对话。
     registry: Arc<Registry>,
+    /// 工具这一头：总台和给 MCP 服务用的套接字（起不来的，带工具的调用回出错）。
+    tools: Arc<Tools>,
     /// 收闲置到点的 agy 的巡检线程。
     sweeper: Sweeper,
     /// 在跑的 `driver.call`：调用编号 → 送信号的一头。
@@ -243,8 +249,11 @@ impl Server {
             .clone();
         let (out, calls) = (self.out.clone(), Arc::clone(&self.calls));
         let registry = Arc::clone(&self.registry);
+        let tools = Arc::clone(&self.tools);
         self.threads.push(std::thread::spawn(move || {
-            let answer = call::run(&out, &config, &registry, &params, &receiver, &sender);
+            let answer = call::run(
+                &out, &config, &registry, &tools, &params, &receiver, &sender,
+            );
             calls
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -303,5 +312,7 @@ impl Server {
         }
         self.sweeper.stop();
         self.registry.drain();
+        // 收完 agy 以后才关套接字（删文件）。
+        drop(self.tools);
     }
 }

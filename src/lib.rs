@@ -9,7 +9,8 @@
 //!
 //! 做成库加一个薄的 `main`：集成测试要直接用套接字服务端（[`bridge`]）扮扩展。
 //!
-//! 这一版是施工 AG-3 上：MCP 服务、套接字、配置登记这些独立的零件；一次调用还没有接上它们，agy 的原生工具全关。
+//! 这一版是施工 AG-3 下：一次调用带工具时，agy 经 MCP 服务调 Miyu 的工具，扩展把它当工具调用交回核心（总台 [`hub`]），下一次请求
+//! 带着结果来再回给 agy；agy 的原生工具全关。
 
 pub mod agent;
 pub mod agy;
@@ -17,6 +18,7 @@ pub mod bridge;
 pub mod call;
 pub mod config;
 pub mod failure;
+pub mod hub;
 pub mod live;
 pub mod mcp;
 pub mod mcp_config;
