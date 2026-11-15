@@ -21,6 +21,7 @@ pub mod call;
 pub mod config;
 pub mod failure;
 pub mod hub;
+pub mod leftovers;
 pub mod live;
 pub mod mcp;
 pub mod mcp_config;

@@ -80,6 +80,7 @@ pub fn talk(
 ) -> Ended {
     live.route(sender.clone());
     let source = Transcripts {
+        live,
         home: live.home().to_path_buf(),
         conversation: live.conversation().map(str::to_string),
     };
@@ -111,12 +112,14 @@ pub fn write_input(live: &Live, input: String) -> impl FnOnce() -> Result<(), St
 }
 
 /// 去哪读 agy 的转录：它跑在哪个家目录下，和（复用的进程这一轮不发 `init`）`Live` 记着的对话编号。
-struct Transcripts {
+struct Transcripts<'a> {
+    /// 这一轮说话的 agy：得知它的对话编号时记号。
+    live: &'a Live,
     home: PathBuf,
     conversation: Option<String>,
 }
 
-impl Transcripts {
+impl Transcripts<'_> {
     /// 一步 agy 自己跑完了的工具（`DONE`、不是 Miyu 的 MCP 工具）、流里没带结果的：从转录读结果填进去。读不到的照样，由状态机
     /// 只收块、不交结果。对话编号先看这一轮的 `init`，没有的用 `Live` 里的。
     fn fill(&self, call: &str, turn: &Turn, step: &mut ToolStep) {
@@ -215,6 +218,9 @@ fn listen(
                             source.fill(call, turn, step);
                         }
                         let fed = turn.feed(event);
+                        if let Some(conversation) = turn.conversation() {
+                            source.live.note_conversation(conversation);
+                        }
                         if let Some(ended) = settle(out, call, fed, &mut held) {
                             return ended;
                         }

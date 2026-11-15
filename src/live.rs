@@ -7,6 +7,8 @@
 //! - 带工具的（[`Wiring`]）：起的时候把套接字地址和口令放进环境变量，总台（[`crate::hub`]）照口令找到这一个进程的路由和工具表；
 //!   一轮以交回一件工具调用结束时，这件调用的 [`Reply`] 跟着 [`Live`] 挂着（[`Live::set_pending`]），等下一次请求带结果来。
 //! - 收掉（丢掉这个值时）：收进程组，删工作目录和 agy 那边这段对话的文件（设计第八节「清理」）。
+//! - 得知对话编号时在状态目录里记一个号（[`leftovers::mark`]），扩展被硬杀了，下一个扩展进程启动时照它清会话文件；
+//!   会话文件删干净了记号才删。
 
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
@@ -21,7 +23,7 @@ use crate::call::Signal;
 use crate::config::Config;
 use crate::hub::Wiring;
 use crate::process::{self, Line};
-use crate::{agy, workspace};
+use crate::{agy, leftovers, workspace};
 
 /// 读的线程把这一行送给谁。
 pub type Route = Arc<Mutex<Option<Sender<Signal>>>>;
@@ -56,6 +58,10 @@ pub struct Live {
     work: PathBuf,
     /// 它跑在哪个家目录下（会话文件在这里）。
     home: PathBuf,
+    /// 扩展的状态目录（记号放在它下面）。
+    state: PathBuf,
+    /// 已经记了号的对话编号。
+    marked: Mutex<Option<String>>,
 }
 
 impl std::fmt::Debug for Live {
@@ -70,7 +76,7 @@ impl std::fmt::Debug for Live {
 
 impl Live {
     /// 照 `config` 起一个 agy：模型 `model`、代理 `agent`、工作目录 `work`（也是 `--add-dir`），家目录 `home`（就是扩展自己的
-    /// `HOME`，只记下来收尾时删会话文件用）。`wiring` 是带工具的（总台里已经登记好）：套接字地址和口令放进它的环境变量，
+    /// `HOME`，只记下来收尾时删会话文件用），状态目录 `state`（记号放这里）。`wiring` 是带工具的（总台里已经登记好）：套接字地址和口令放进它的环境变量，
     /// 路由和「乱说话了」的标记用总台那一份；不带的两个变量一个都不给。起不来的不删 `work`，由调用的人删（`wiring` 随之丢掉）。
     ///
     /// # Errors
@@ -82,6 +88,7 @@ impl Live {
         agent: &str,
         work: PathBuf,
         home: PathBuf,
+        state: PathBuf,
         wiring: Option<Wiring>,
     ) -> std::io::Result<Live> {
         let mut command = agy::command(config, agy::chat_args(model, agent, &work));
@@ -137,6 +144,8 @@ impl Live {
             conversation: None,
             work,
             home,
+            state,
+            marked: Mutex::new(None),
         })
     }
 
@@ -158,9 +167,35 @@ impl Live {
         &self.home
     }
 
-    /// 记下 agy 这段对话的编号（收尾时删它的文件）。
+    /// 记下 agy 这段对话的编号（收尾时删它的文件），并记号。
     pub fn set_conversation(&mut self, conversation: &str) {
         self.conversation = Some(conversation.to_string());
+        self.note_conversation(conversation);
+    }
+
+    /// 刚得知对话编号 `conversation`（`init` 才到、这一轮还没完）：在状态目录里记号，扩展这时被硬杀了也有人知道该清哪段。
+    /// 编号不合 [`workspace::valid_conversation`] 的不记；已经记过的不重复写；写不了的记一行日志，不影响调用。
+    pub fn note_conversation(&self, conversation: &str) {
+        let mut marked = self.marked.lock().unwrap_or_else(PoisonError::into_inner);
+        if marked.as_deref() == Some(conversation) || !workspace::valid_conversation(conversation) {
+            return;
+        }
+        match leftovers::mark(&self.state, conversation) {
+            Ok(()) => {
+                if let Some(old) = marked.replace(conversation.to_string())
+                    && let Err(error) = leftovers::unmark(&self.state, &old)
+                {
+                    eprintln!(
+                        "agy (pid {}): could not remove the mark of {old}: {error}",
+                        self.child.id()
+                    );
+                }
+            }
+            Err(error) => eprintln!(
+                "agy (pid {}): could not mark its conversation {conversation}: {error}",
+                self.child.id()
+            ),
+        }
     }
 
     /// 之后读到的每一行送给 `to`（这一轮在听的那一次调用）。
@@ -235,10 +270,27 @@ impl Drop for Live {
                 self.work.display()
             );
         }
-        if let Some(conversation) = &self.conversation
-            && let Err(error) = workspace::remove_conversation(&self.home, conversation)
+        let removed = match &self.conversation {
+            Some(conversation) => workspace::remove_conversation(&self.home, conversation)
+                .inspect_err(|error| {
+                    eprintln!(
+                        "agy (pid {pid}): could not remove its conversation {conversation}: {error}"
+                    );
+                })
+                .is_ok(),
+            None => true,
+        };
+        // 会话文件没删干净的，记号留着：下次启动的清扫再试一次。
+        let marked = self
+            .marked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if removed
+            && let Some(marked) = marked
+            && let Err(error) = leftovers::unmark(&self.state, &marked)
         {
-            eprintln!("agy (pid {pid}): could not remove its conversation {conversation}: {error}");
+            eprintln!("agy (pid {pid}): could not remove the mark of {marked}: {error}");
         }
     }
 }

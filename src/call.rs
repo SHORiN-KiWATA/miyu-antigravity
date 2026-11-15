@@ -17,7 +17,7 @@
 mod resume;
 mod talk;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Instant, SystemTime};
 
@@ -261,6 +261,18 @@ fn wire(job: &Job<'_>, home: &Path) -> Result<Option<Wiring>, Value> {
     Ok(Some(wiring))
 }
 
+/// 状态目录，和在它下面新建的 agy 工作目录；建不成的是照没交增量归类的出错回答。
+fn work_folder() -> Result<(PathBuf, PathBuf), Value> {
+    workspace::state_dir()
+        .and_then(|state| workspace::create_work_dir(&state).map(|work| (state, work)))
+        .map_err(|error| {
+            turn::failed(
+                Class::Unclassified,
+                &format!("could not make a working folder for agy: {error}"),
+            )
+        })
+}
+
 /// 新开一段 agy 对话：整份转写 `whole` 发过去。成功了、认得出对话（`incoming`）的登记进表，agy 留着；别的都收掉。
 fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
     let Some(home) = workspace::home() else {
@@ -292,16 +304,19 @@ fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
         Ok(wiring) => wiring,
         Err(answer) => return answer,
     };
-    let work = match workspace::state_dir().and_then(|state| workspace::create_work_dir(&state)) {
-        Ok(work) => work,
-        Err(error) => {
-            return turn::failed(
-                Class::Unclassified,
-                &format!("could not make a working folder for agy: {error}"),
-            );
-        }
+    let (state, work) = match work_folder() {
+        Ok(folders) => folders,
+        Err(answer) => return answer,
     };
-    let mut live = match Live::start(job.config, job.model, &agent, work.clone(), home, wiring) {
+    let mut live = match Live::start(
+        job.config,
+        job.model,
+        &agent,
+        work.clone(),
+        home,
+        state,
+        wiring,
+    ) {
         Ok(live) => live,
         Err(error) => {
             if let Err(error) = workspace::remove_work_dir(&work) {

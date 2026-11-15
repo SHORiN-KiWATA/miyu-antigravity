@@ -34,6 +34,8 @@ pub struct Core {
     pub record: PathBuf,
     /// 假 agy 的包装脚本。
     pub binary: PathBuf,
+    /// 这些目录归它删（丢掉时）：[`Core::restart`] 起的那个接着用同一套目录，原来的就不再管。
+    owns_dirs: bool,
 }
 
 /// 一次调用收到的：增量（照先后）、每条 `driver.delta` 原来那一行有多长、回应。
@@ -160,18 +162,18 @@ impl Core {
     /// 只起不握手，扩展另带环境变量 `env`。
     pub fn spawn_with(name: &str, mode: &str, env: &[(&str, &str)]) -> Core {
         let root = scratch(name);
-        let [home, state, record, bin] = ["home", "state", "record", "bin"].map(|part| {
+        let [_, _, _, bin] = ["home", "state", "record", "bin"].map(|part| {
             let dir = root.join(part);
             std::fs::create_dir_all(&dir).unwrap();
             dir
         });
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let runtime = std::env::temp_dir().join(format!(
             "ag-{}-{}",
             std::process::id(),
             root.file_name().unwrap().to_string_lossy()
         ));
         std::fs::create_dir_all(&runtime).unwrap();
-        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let binary = bin.join("agy");
         std::fs::write(
             &binary,
@@ -182,7 +184,13 @@ impl Core {
         )
         .unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Core::launch(root, runtime, binary, env)
+    }
 
+    /// 在已经备好的目录（`root` 下的 `home`、`state`、`record`，套接字目录 `runtime`）里起扩展，不握手。
+    fn launch(root: PathBuf, runtime: PathBuf, binary: PathBuf, env: &[(&str, &str)]) -> Core {
+        let [home, state, record] = ["home", "state", "record"].map(|part| root.join(part));
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut command = Command::new(env!("CARGO_BIN_EXE_miyu-antigravity"));
         command.env("MIYU_RUNTIME_DIR", &runtime);
         command.envs(env.iter().copied());
@@ -219,6 +227,48 @@ impl Core {
             runtime,
             record,
             binary,
+            owns_dirs: true,
+        }
+    }
+
+    /// 扩展的进程号。
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// 用 `SIGKILL` 杀掉扩展、等它没了：它来不及收尾。
+    pub fn kill_hard(&mut self) {
+        self.child.kill().unwrap();
+        self.child.wait().unwrap();
+        drop(self.stdin.take());
+    }
+
+    /// 用同一套目录再起一个扩展并握手（配置只有 `antigravity.binary`）。目录从此归新的这个删；原来的得先杀掉
+    /// （[`Core::kill_hard`]）、之后只管丢掉。
+    pub fn restart(&mut self) -> Core {
+        self.owns_dirs = false;
+        let mut core = Core::launch(
+            self.root.clone(),
+            self.runtime.clone(),
+            self.binary.clone(),
+            &[],
+        );
+        core.answer_hello(
+            &json!({"protocol": 1, "language": "en", "config": {"antigravity.binary": core.binary.to_str().unwrap()}}),
+            None,
+        );
+        core
+    }
+
+    /// 发一次 `driver.models`、等回应：回应到了，说明扩展已经过了启动、在读请求。
+    pub fn wait_started(&mut self) {
+        self.send(&json!({"jsonrpc": "2.0", "id": "m1", "method": "driver.models", "params": {}}));
+        loop {
+            let message = self.recv();
+            if message["id"] == "m1" {
+                assert!(message.get("error").is_none(), "{message}");
+                return;
+            }
         }
     }
 
@@ -402,8 +452,10 @@ impl Drop for Core {
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        std::fs::remove_dir_all(&self.root).ok();
-        std::fs::remove_dir_all(&self.runtime).ok();
+        if self.owns_dirs {
+            std::fs::remove_dir_all(&self.root).ok();
+            std::fs::remove_dir_all(&self.runtime).ok();
+        }
     }
 }
 

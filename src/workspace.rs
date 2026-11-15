@@ -93,7 +93,7 @@ pub fn remove_conversation(home: &Path, id: &str) -> std::io::Result<()> {
     results.into_iter().collect()
 }
 
-fn absent_ok(result: std::io::Result<()>) -> std::io::Result<()> {
+pub(crate) fn absent_ok(result: std::io::Result<()>) -> std::io::Result<()> {
     match result {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         other => other,

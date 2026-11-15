@@ -6,7 +6,7 @@
 //! 日志。握手被拒、配置读不懂的退出码 1（核心不再拉起）；标准输入读到头是请退出：收掉还在跑的和留着的 agy，退出码 0。
 //!
 //! 活着的 agy 对话记在一张登记表里（[`Registry`]），一个巡检线程按 `antigravity.keep_seconds`、`antigravity.tool_wait_seconds` 收闲置到点的
-//! （[`Sweeper`]）。握手以后起给 MCP 服务用的套接字（[`Tools`]），退出时删掉。
+//! （[`Sweeper`]）。握手以后起给 MCP 服务用的套接字（[`Tools`]），退出时删掉；读完配置以后、起套接字之前先清一次上个被硬杀的扩展进程留下的（[`leftovers`]）。
 
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -20,8 +20,8 @@ use serde_json::{Map, Value, json};
 use crate::call::{self, Answer, Signal};
 use crate::config::Config;
 use crate::hub::Tools;
-use crate::models;
 use crate::registry::{self, Registry, Sweeper};
+use crate::{bridge, leftovers, models, workspace};
 
 /// 往标准输出写的一头：几个线程共用，一行一锁。
 #[derive(Clone)]
@@ -112,6 +112,7 @@ pub fn serve(input: impl BufRead, out: &Out) -> ExitCode {
         break;
     }
 
+    sweep_leftovers();
     let config = Arc::new(RwLock::new(config));
     let registry = Arc::new(Registry::default());
     let tools = Arc::new(Tools::start());
@@ -140,6 +141,23 @@ pub fn serve(input: impl BufRead, out: &Out) -> ExitCode {
     };
     server.shut_down();
     code
+}
+
+/// 清上一个被硬杀的扩展进程留下的东西（[`leftovers`]）：读完配置以后、起套接字服务端之前做一次；出的错只记日志。
+fn sweep_leftovers() {
+    let state = match workspace::state_dir() {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("cleaning up: no state folder, nothing swept: {error}");
+            return;
+        }
+    };
+    let socket = bridge::socket_path().ok();
+    leftovers::sweep(
+        &state,
+        socket.as_deref().and_then(std::path::Path::parent),
+        workspace::home().as_deref(),
+    );
 }
 
 /// 下一行；读到头、读不下去是 `None`。
