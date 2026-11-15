@@ -44,7 +44,8 @@ pub fn content(name: &str, system: &str) -> String {
 pub const MAX_AGE: Duration = Duration::from_hours(1);
 
 /// 代理目录的父目录。
-fn agents_dir(home: &Path) -> PathBuf {
+#[must_use]
+pub fn agents_dir(home: &Path) -> PathBuf {
     home.join(".gemini/config/agents")
 }
 
@@ -93,9 +94,9 @@ pub fn touch(home: &Path, name: &str) -> std::io::Result<()> {
 /// # Errors
 ///
 /// 读目录、删目录出错：交第一个错，别的照样删。
-pub fn sweep(
+pub fn sweep<S: std::hash::BuildHasher>(
     home: &Path,
-    keep: &HashSet<String>,
+    keep: &HashSet<String, S>,
     now: SystemTime,
     max_age: Duration,
 ) -> std::io::Result<()> {

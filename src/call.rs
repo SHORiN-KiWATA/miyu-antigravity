@@ -1,7 +1,7 @@
 //! 一次 `driver.call`（设计第四节第 1～5 条，第五节，第八节）：
 //!
 //! 1. 认是哪段对话（[`crate::sessions::next_turn`]）：登记表（[`Registry`]）里有闲着的、接得上的，就是**新的一轮**——只把
-//!    新的几条 user 消息写进那个还活着的 agy 的标准输入（[`transcript::new_turn`]），读流、交增量（[`talk`]）；成功了记下
+//!    新的几条 user 消息写进那个还活着的 agy 的标准输入（[`transcript::new_turn`]），读流、交增量（`call/talk.rs`）；成功了记下
 //!    这一次的消息指纹、放回表里。那个 agy 一行没写就没了的，改走新开。
 //! 2. 认不上的**新开**：整份 `request.messages` 转写成一条文字（[`transcript::transcribe`]），`request.system` 写成代理
 //!    （[`agent`]），新建工作目录，起 agy（[`Live`]），读流、交增量；成功了登记进表（闲着），agy 留着等下一轮。
