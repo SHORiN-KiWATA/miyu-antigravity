@@ -1,6 +1,7 @@
 //! 系统提示词写成 agy 的自定义代理（设计第二节「系统提示词」、第九节）：`<家目录>/.gemini/config/agents/<名>/agent.md`，
-//! 名字是 `miyu-` 加 `request.system` 的 SHA-256 前 16 位十六进制，`--agent <名>` 选它。frontmatter 照旧版 Miyu 的
-//! `antigravity/setup.rs`；`tools: []` 把 agy 的原生工具全关（AG-1 没有工具）。正文是 `request.system` 原文。
+//! 名字是 `miyu-` 加「白名单 + `request.system`」的 SHA-256 前 16 位十六进制（白名单变了名字跟着变，旧文件不会被当成新的用），
+//! `--agent <名>` 选它。frontmatter 照旧版 Miyu 的 `antigravity/setup.rs`；`tools:` 是 agy 原生工具的白名单，只开 [`TOOLS`]
+//! 里的（设计第七节）。正文是 `request.system` 原文。
 //!
 //! 回收（设计第八节「清理」）：每次写代理文件时，删掉 `miyu-` 开头、`agent.md` 一小时没改过、又不是活着的对话在用的代理
 //! 目录（[`sweep`]）；活着的对话每接一轮把它的 `agent.md` 摸新（[`touch`]），别的 Miyu 进程回收时也不会删它。
@@ -11,10 +12,17 @@ use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
-/// 代理的名字：`miyu-` 加 `system` 的 SHA-256 前 16 位十六进制。
+/// 代理文件里开着的 agy 原生工具（白名单）：只有不碰本机的 `search_web`（设计第七节）。清单 `hosted` 照这个写。
+pub const TOOLS: &[&str] = &["search_web"];
+
+/// 代理的名字：`miyu-` 加「[`TOOLS`]（逗号连起来）、一个 NUL、`system`」的 SHA-256 前 16 位十六进制。
 #[must_use]
 pub fn name(system: &str) -> String {
-    let digest = Sha256::digest(system.as_bytes());
+    let mut hasher = Sha256::new();
+    hasher.update(TOOLS.join(",").as_bytes());
+    hasher.update([0u8]);
+    hasher.update(system.as_bytes());
+    let digest = hasher.finalize();
     format!("miyu-{}", hex(&digest[..8]))
 }
 
@@ -36,7 +44,8 @@ pub fn content(name: &str, system: &str) -> String {
     format!(
         "---\nname: {name}\n\
          description: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\n\
-         mainAgent: true\nsubagent: false\ntools: []\n---\n\n{system}"
+         mainAgent: true\nsubagent: false\ntools: [{}]\n---\n\n{system}",
+        TOOLS.join(", ")
     )
 }
 
@@ -138,8 +147,10 @@ mod tests {
 
     #[test]
     fn name_is_the_first_16_hex_digits_of_sha256() {
-        // printf 'You are helpful.' | sha256sum
-        assert_eq!(name("You are helpful."), "miyu-42ea835592c20e1e");
+        // printf 'search_web\0You are helpful.' | sha256sum：白名单在前，NUL 隔开。
+        assert_eq!(name("You are helpful."), "miyu-c596dc5fc422a390");
+        // 只哈希 system 的旧名字（白名单是空的那一版）不会再撞上。
+        assert_ne!(name("You are helpful."), "miyu-42ea835592c20e1e");
         assert_eq!(name("").len(), "miyu-".len() + 16);
         assert_ne!(name("a"), name("b"));
     }
@@ -150,7 +161,24 @@ mod tests {
             content("miyu-0011223344556677", "Line one.\n\nLine two."),
             "---\nname: miyu-0011223344556677\n\
              description: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\n\
-             mainAgent: true\nsubagent: false\ntools: []\n---\n\nLine one.\n\nLine two."
+             mainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\nLine one.\n\nLine two."
+        );
+    }
+
+    #[test]
+    fn the_whitelist_is_search_web_alone_and_the_name_follows_it() {
+        assert_eq!(TOOLS, ["search_web"]);
+        let text = content("n", "s");
+        assert!(text.contains("\ntools: [search_web]\n"), "{text}");
+        assert!(!text.contains("tools: []"), "{text}");
+        // 名字的输入是「白名单 NUL system」：自己算一遍对得上，白名单换一份名字就变。
+        let digest = |input: &str| hex(&Sha256::digest(input.as_bytes())[..8]);
+        assert_eq!(name("s"), format!("miyu-{}", digest("search_web\0s")));
+        assert_ne!(name("s"), format!("miyu-{}", digest("s")));
+        assert_ne!(name("s"), format!("miyu-{}", digest("\0s")));
+        assert_ne!(
+            name("s"),
+            format!("miyu-{}", digest("search_web,read_url_content\0s"))
         );
     }
 

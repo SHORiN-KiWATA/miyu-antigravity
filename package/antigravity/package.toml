@@ -29,6 +29,8 @@ cache = "best_effort"
 key = "none"
 # agy 只收文字，图由核心转述（设计第九节）。
 images = false
+# agy 自己跑完、Miyu 只照实显示的工具（设计第七节）：代理文件的白名单只开这一件。
+hosted = ["search_web"]
 
 [settings.binary]
 type = "text"
