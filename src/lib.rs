@@ -13,6 +13,7 @@
 
 pub mod agent;
 pub mod agy;
+pub mod bridge;
 pub mod call;
 pub mod config;
 pub mod failure;
