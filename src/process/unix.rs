@@ -44,20 +44,21 @@ pub fn terminate(child: &mut Child, grace: Duration) {
     if let Err(error) = child.wait() {
         eprintln!("reaping agy (pid {raw}) failed: {error}");
     }
+    // macOS 上组里只剩已经死了、还没被收尸的进程时，`killpg` 回 `EPERM` 而不是成功（macOS CI 上见过）：和「还在」一样接着等，
+    // 等 init 收完尸变成 `ESRCH`。到点还是 `EPERM` 的，组里已经没有在跑的进程，不记日志。
     let deadline = Instant::now() + GONE;
     loop {
-        match killpg(group, None) {
-            Err(Errno::ESRCH) => return,
-            Ok(()) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Ok(()) => {
-                eprintln!("agy's process group {group} is still there after SIGKILL");
-                return;
-            }
-            Err(error) => {
-                eprintln!("checking agy's process group {group} failed: {error}");
-                return;
-            }
+        let seen = killpg(group, None);
+        if matches!(seen, Ok(()) | Err(Errno::EPERM)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
         }
+        match seen {
+            Err(Errno::ESRCH | Errno::EPERM) => {}
+            Ok(()) => eprintln!("agy's process group {group} is still there after SIGKILL"),
+            Err(error) => eprintln!("checking agy's process group {group} failed: {error}"),
+        }
+        return;
     }
 }
 

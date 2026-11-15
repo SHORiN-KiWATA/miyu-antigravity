@@ -8,6 +8,7 @@ miyu = "2026.11.0"
 name = { en = "Antigravity", zh = "Antigravity" }
 summary = { en = "Use the local Antigravity CLI (agy) as a model provider", zh = "把本机的 Antigravity CLI（agy）当模型供应商" }
 author = "SHORiN-KiWATA"
+upstream = "https://github.com/SHORiN-KiWATA/miyu-antigravity"
 license = "AGPL-3.0-or-later"
 icon = "rocket"
 # 带本机程序；进程组、信号照 Unix 写，第一版只打 Linux、macOS 的包（设计第十二节）。
