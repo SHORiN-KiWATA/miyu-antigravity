@@ -317,7 +317,8 @@ fn the_agent_file_whitelists_search_web_and_the_agent_check_still_passes() {
     let system = "s"; // `run` 的请求里的系统提示词
     let (core, got) = run("h-agent", "plan:search", "search for it");
     succeeded(&got);
-    let digest = Sha256::digest(format!("search_web\0{system}").as_bytes());
+    let body = format!("{system}\n\n{}", miyu_antigravity::words::AGENT_NOTE);
+    let digest = Sha256::digest(format!("search_web\0{body}").as_bytes());
     let name = format!("miyu-{}", &hex(&digest[..8])[..16]);
     let record = core.records().remove(0);
     let argv: Vec<&str> = record["argv"]
@@ -338,5 +339,5 @@ fn the_agent_file_whitelists_search_web_and_the_agent_check_still_passes() {
     let content = std::fs::read_to_string(file).unwrap();
     assert!(content.contains("\ntools: [search_web]\n"), "{content}");
     assert!(!content.contains("tools: []"), "{content}");
-    assert!(content.ends_with(&format!("---\n\n{system}")), "{content}");
+    assert!(content.ends_with(&format!("---\n\n{body}")), "{content}");
 }

@@ -1,3 +1,4 @@
+use miyu_antigravity::words;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -13,7 +14,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// 系统提示词对应的代理名：`miyu-` 加「白名单 NUL system」的 SHA-256 前 16 位。
 fn agent_name(system: &str) -> String {
-    let input = format!("search_web\0{system}");
+    let input = format!("search_web\0{system}\n\n{}", words::AGENT_NOTE);
     format!("miyu-{}", &hex(&Sha256::digest(input.as_bytes()))[..16])
 }
 
@@ -122,7 +123,8 @@ fn pong_streams_text_and_usage_and_cleans_up() {
     assert_eq!(
         std::fs::read_to_string(agent_file).unwrap(),
         format!(
-            "---\nname: {agent}\ndescription: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\nmainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\n{system}"
+            "---\nname: {agent}\ndescription: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\nmainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\n{system}\n\n{}",
+            words::AGENT_NOTE
         )
     );
     assert!(

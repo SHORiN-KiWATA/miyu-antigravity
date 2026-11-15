@@ -86,3 +86,7 @@ pub const MCP_NO_BRIDGE: &str =
 /// MCP 服务答 `tools/call`：等的时候连不上、连接断了、扩展回了拒绝，Miyu 那一头不在了。
 pub const MCP_BRIDGE_GONE: &str =
     "The Miyu side of this tool call is gone, so the call did not complete.";
+
+/// 代理文件里接在系统提示词后面的一段：agy 把它自己的临时工作目录当「工作区」报给模型（真机上模型照它写过文件链接），
+/// 这里说清那不是人的工作目录。
+pub const AGENT_NOTE: &str = "Note from the Antigravity bridge: the workspace folder that the Antigravity CLI reports is an empty scratch folder of the CLI itself, not the user's working directory. The working directory and file paths are the ones given in this prompt, in the conversation and in tool results; relative paths in tool calls resolve against that working directory.";

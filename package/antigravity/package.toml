@@ -35,7 +35,7 @@ hosted = ["search_web"]
 [settings.binary]
 type = "text"
 max = 1024
-default = ""
+# 不写默认值：没填就是在 PATH 里找 agy（清单里文字的默认值不能是空的）。
 applies = "now"
 name = { en = "agy program", zh = "agy 程序" }
 description = { en = "Full path of the Antigravity CLI. Empty: look for agy on PATH.", zh = "Antigravity CLI 的完整路径。空着：在 PATH 里找 agy。" }

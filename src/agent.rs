@@ -12,6 +12,8 @@ use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 
+use crate::words;
+
 /// 代理文件里开着的 agy 原生工具（白名单）：只有不碰本机的 `search_web`（设计第七节）。清单 `hosted` 照这个写。
 pub const TOOLS: &[&str] = &["search_web"];
 
@@ -21,7 +23,7 @@ pub fn name(system: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(TOOLS.join(",").as_bytes());
     hasher.update([0u8]);
-    hasher.update(system.as_bytes());
+    hasher.update(body(system).as_bytes());
     let digest = hasher.finalize();
     format!("miyu-{}", hex(&digest[..8]))
 }
@@ -38,14 +40,21 @@ pub fn hex(bytes: &[u8]) -> String {
     text
 }
 
+/// 代理文件的正文：`system` 原文，空一行，接 [`words::AGENT_NOTE`]。
+#[must_use]
+pub fn body(system: &str) -> String {
+    format!("{system}\n\n{}", words::AGENT_NOTE)
+}
+
 /// 代理文件的全文。
 #[must_use]
 pub fn content(name: &str, system: &str) -> String {
     format!(
         "---\nname: {name}\n\
          description: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\n\
-         mainAgent: true\nsubagent: false\ntools: [{}]\n---\n\n{system}",
-        TOOLS.join(", ")
+         mainAgent: true\nsubagent: false\ntools: [{}]\n---\n\n{}",
+        TOOLS.join(", "),
+        body(system)
     )
 }
 
@@ -147,8 +156,10 @@ mod tests {
 
     #[test]
     fn name_is_the_first_16_hex_digits_of_sha256() {
-        // printf 'search_web\0You are helpful.' | sha256sum：白名单在前，NUL 隔开。
-        assert_eq!(name("You are helpful."), "miyu-c596dc5fc422a390");
+        // 「白名单 NUL 正文」的 SHA-256：正文是 system、空一行、`words::AGENT_NOTE`。
+        assert_eq!(name("You are helpful."), "miyu-e50ecc69ba43146b");
+        // 正文里没有那段说明的旧名字不会再撞上。
+        assert_ne!(name("You are helpful."), "miyu-c596dc5fc422a390");
         // 只哈希 system 的旧名字（白名单是空的那一版）不会再撞上。
         assert_ne!(name("You are helpful."), "miyu-42ea835592c20e1e");
         assert_eq!(name("").len(), "miyu-".len() + 16);
@@ -159,9 +170,12 @@ mod tests {
     fn content_has_the_frontmatter_and_the_prompt_verbatim() {
         assert_eq!(
             content("miyu-0011223344556677", "Line one.\n\nLine two."),
-            "---\nname: miyu-0011223344556677\n\
+            format!(
+                "---\nname: miyu-0011223344556677\n\
              description: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\n\
-             mainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\nLine one.\n\nLine two."
+             mainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\nLine one.\n\nLine two.\n\n{}",
+                crate::words::AGENT_NOTE
+            )
         );
     }
 
@@ -171,14 +185,22 @@ mod tests {
         let text = content("n", "s");
         assert!(text.contains("\ntools: [search_web]\n"), "{text}");
         assert!(!text.contains("tools: []"), "{text}");
-        // 名字的输入是「白名单 NUL system」：自己算一遍对得上，白名单换一份名字就变。
+        // 名字的输入是「白名单 NUL 正文」：自己算一遍对得上，白名单换一份、正文少了那段说明，名字就变。
         let digest = |input: &str| hex(&Sha256::digest(input.as_bytes())[..8]);
-        assert_eq!(name("s"), format!("miyu-{}", digest("search_web\0s")));
-        assert_ne!(name("s"), format!("miyu-{}", digest("s")));
-        assert_ne!(name("s"), format!("miyu-{}", digest("\0s")));
+        let body = body("s");
+        assert_eq!(
+            name("s"),
+            format!("miyu-{}", digest(&format!("search_web\0{body}")))
+        );
+        assert_ne!(name("s"), format!("miyu-{}", digest("search_web\0s")));
+        assert_ne!(name("s"), format!("miyu-{}", digest(&body)));
+        assert_ne!(name("s"), format!("miyu-{}", digest(&format!("\0{body}"))));
         assert_ne!(
             name("s"),
-            format!("miyu-{}", digest("search_web,read_url_content\0s"))
+            format!(
+                "miyu-{}",
+                digest(&format!("search_web,read_url_content\0{body}"))
+            )
         );
     }
 
