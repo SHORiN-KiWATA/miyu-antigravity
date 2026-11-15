@@ -1,5 +1,7 @@
 # miyu-antigravity
 
+[English](README.en.md)
+
 Miyu 的扩展包 `antigravity`：登记模型驱动 `antigravity/antigravity`，把这家供应商的每一次模型调用交给本机的
 Antigravity CLI（`agy`），用你在 agy 里已有的登录和订阅额度。
 
