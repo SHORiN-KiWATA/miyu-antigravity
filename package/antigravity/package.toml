@@ -46,3 +46,12 @@ default = 600
 applies = "now"
 name = { en = "Keep idle agy for (seconds)", zh = "闲着的 agy 留多久（秒）" }
 description = { en = "How long an idle agy process is kept for the next turn of its conversation before it is stopped.", zh = "一段对话说完以后，agy 进程留着等下一轮多久，到点收掉。" }
+
+[settings.tool_wait_seconds]
+type = "int"
+min = 60
+max = 86400
+default = 3600
+applies = "now"
+name = { en = "Wait for a tool call (seconds)", zh = "等一次工具调用（秒）" }
+description = { en = "How long a tool call handed back to Miyu may take, including time spent waiting for the person to confirm, before agy gives up on it.", zh = "agy 把一次工具调用交回 Miyu 后最多等多久，核心执行工具、等人点确认的时间都算在里面。" }
