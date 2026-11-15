@@ -114,6 +114,19 @@ pub fn new_turn(request: &Value, from: usize) -> Result<Vec<String>, BadRequest>
     Ok(texts)
 }
 
+/// 第 `index` 条消息的字（块转成字，块之间换行，规矩同 [`transcribe`]）；没有这一条的是 `None`。给回工具结果用
+/// （图片、文件换成占位）。
+///
+/// # Errors
+///
+/// 同 [`transcribe`]。
+pub fn message_text(request: &Value, index: usize) -> Result<Option<String>, BadRequest> {
+    Ok(parse(request)?
+        .into_iter()
+        .nth(index)
+        .map(|message| message.body))
+}
+
 /// 读出 `request.messages` 的每一条。
 fn parse(request: &Value) -> Result<Vec<Message>, BadRequest> {
     let messages = request

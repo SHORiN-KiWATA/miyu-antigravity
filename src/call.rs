@@ -7,26 +7,37 @@
 //!    （[`agent`]），新建工作目录，起 agy（[`Live`]），读流、交增量；成功了登记进表（闲着），agy 留着等下一轮。
 //! 3. 出了任何错（含 `driver.cancel`）：这段 agy 对话作废——收进程组、删会话文件和工作目录（丢掉 [`Live`] 就是收掉）。
 //!
+//! 请求带工具（`request.tools`）的，agy 经 MCP 服务调 Miyu 的工具（设计第四节第 4 条、第六节）：新开时先把工具表登记到总台
+//! （[`crate::hub`]）、把这个包的 MCP 条目写进 agy 的 `mcp_config.json`（[`crate::mcp_config`]），再起 agy。agy 一调工具，这一次
+//! `driver.call` 就以一块工具调用结束，agy 那头挂着等（[`Live`] 带着挂着的调用，表里记成「挂着」）；下一次请求带着
+//! assistant（那块工具调用）加 tool（结果）来，认得出就把结果回给 agy、接着读流（`call/resume.rs`）；对不上的挂着的作废、照第五节重放。
+//!
 //! `driver.cancel` 经 [`Signal::Cancel`] 送进同一个通道。
 
+mod resume;
 mod talk;
 
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Instant, SystemTime};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::bridge::Tool;
 use crate::config::{self, Config};
 use crate::failure::Class;
+use crate::hub::{McpCall, Tools, Wiring};
 use crate::live::Live;
+use crate::mcp_config::{self, Registration};
 use crate::process::Line;
 use crate::registry::Registry;
 use crate::rpc::Out;
-use crate::sessions::{Claimed, Identity, Incoming, Meta};
+use crate::sessions::{Identity, Incoming, Meta};
 use crate::turn::{self, Turn};
-use crate::{agent, agy, transcript, workspace};
-use talk::{Ended, succeeded, talk};
+use crate::{agent, agy, schema, transcript, workspace};
+use resume::{resume, resume_pending};
+use talk::{Ended, succeeded, talk, write_input};
 
 /// 送给一次调用的事：agy 的输出、读的结局、核心的取消。
 #[derive(Debug)]
@@ -37,6 +48,8 @@ pub enum Signal {
     ReadFailed(String),
     /// agy 的输出读到头了。
     Closed,
+    /// agy 经 MCP 服务调了一件 Miyu 的工具（总台转来的，连接在里面）。
+    ToolCall(McpCall),
     /// 核心发了 `driver.cancel`，或者扩展要退出了。
     Cancel,
 }
@@ -69,25 +82,28 @@ pub fn spawn_failure(config: &Config, error: &std::io::Error) -> String {
     }
 }
 
-/// 这一次要用的：往哪交、配置、登记表、调用编号、模型、系统提示词、请求、收信号的两头。
+/// 这一次要用的：往哪交、配置、登记表、工具这一头、调用编号、模型、系统提示词、请求、请求里的工具表（整过形的）、收信号的两头。
 struct Job<'a> {
     out: &'a Out,
     config: &'a Config,
     registry: &'a Registry,
+    tools: &'a Tools,
     call: &'a str,
     model: &'a str,
     system: &'a str,
     request: &'a Value,
+    declared: Vec<Tool>,
     signals: &'a Receiver<Signal>,
     sender: &'a Sender<Signal>,
 }
 
-/// 跑一次 `driver.call`：参数 `params`，增量经 `out` 交，`signals` 收 agy 的输出和取消（`sender` 是它的发送头，交给读输出的
-/// 线程）；活着的 agy 对话在 `registry` 里。
+/// 跑一次 `driver.call`：参数 `params`，增量经 `out` 交，`signals` 收 agy 的输出、MCP 转来的工具调用和取消（`sender` 是它的
+/// 发送头，交给读输出的线程）；活着的 agy 对话在 `registry` 里，工具这一头（总台和套接字）是 `tools`。
 pub fn run(
     out: &Out,
     config: &Config,
     registry: &Registry,
+    tools: &Tools,
     params: &Value,
     signals: &Receiver<Signal>,
     sender: &Sender<Signal>,
@@ -109,6 +125,10 @@ pub fn run(
         Ok(text) => text,
         Err(error) => return Answer::BadParams(error.to_string()),
     };
+    let declared = match declared_tools(request) {
+        Ok(declared) => declared,
+        Err(message) => return Answer::BadParams(message),
+    };
     let incoming = incoming(params, model, request);
     if incoming.is_none() {
         eprintln!("call {call}: no usable fingerprint; this agy conversation will not be kept");
@@ -117,17 +137,24 @@ pub fn run(
         out,
         config,
         registry,
+        tools,
         call,
         model,
         system,
         request,
+        declared,
         signals,
         sender,
     };
     if let Some(incoming) = &incoming
         && let Some(claimed) = registry.claim(incoming)
     {
-        match resume(&job, claimed, incoming) {
+        let resumed = if claimed.pending {
+            resume_pending(&job, claimed, incoming)
+        } else {
+            resume(&job, claimed, incoming)
+        };
+        match resumed {
             Ok(answer) => return Answer::Result(answer),
             Err(gone) => eprintln!("call {call}: {gone}; starting a new agy conversation"),
         }
@@ -166,7 +193,35 @@ fn incoming(params: &Value, model: &str, request: &Value) -> Option<Incoming> {
     })
 }
 
-/// 成功的回答带上 `sent`：写进标准输入的那一行 `input` 的 SHA-256。
+/// 请求里声明的工具：名字、说明、参数格式（照 [`schema::shape`] 整过形）。写法不对的交说明哪里不对。
+fn declared_tools(request: &Value) -> Result<Vec<Tool>, String> {
+    let Some(declared) = request.get("tools").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    declared
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| {
+            let name = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("params.request.tools[{index}].name is not text"))?;
+            Ok(Tool {
+                name: name.to_string(),
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                input_schema: schema::shape(
+                    tool.get("parameters").cloned().unwrap_or_else(|| json!({})),
+                ),
+            })
+        })
+        .collect()
+}
+
+/// 成功的回答带上 `sent`：写进标准输入的那一行 `input` 的 SHA-256（回工具结果的那一轮是回给 agy 的那段字）。
 fn with_sent(mut answer: Value, input: &str) -> Value {
     if let Some(object) = answer.as_object_mut()
         && !object.contains_key("error")
@@ -177,60 +232,33 @@ fn with_sent(mut answer: Value, input: &str) -> Value {
     answer
 }
 
-/// 新的一轮：接在 `claimed` 那个活着的 agy 上。交回答；那个 agy 一行没写就没了的交 `Err`（原因），这段已经作废，调用的人
-/// 改走新开。
-fn resume(job: &Job<'_>, claimed: Claimed<Live>, incoming: &Incoming) -> Result<Value, String> {
-    let Claimed {
-        id,
-        live,
-        known,
-        agent,
-    } = claimed;
-    let texts = match transcript::new_turn(job.request, known + 1) {
-        Ok(texts) => texts,
-        Err(error) => {
-            // 整份转写已经读通过，这里不会出错；真出了照作废。
-            job.registry.forget(id);
-            drop(live);
-            return Ok(turn::failed(Class::Unclassified, &error.to_string()));
-        }
+/// 请求带工具的：登记总台、把 MCP 条目写进 agy 的配置。出了错的交回答（`unclassified`，原话说明怎么办）；不带工具的交 `None`。
+fn wire(job: &Job<'_>, home: &Path) -> Result<Option<Wiring>, Value> {
+    if job.declared.is_empty() {
+        return Ok(None);
+    }
+    let wiring = job
+        .tools
+        .wire(job.declared.clone())
+        .map_err(|why| turn::failed(Class::Unclassified, &why))?;
+    let program = std::env::current_exe().map_err(|error| {
+        turn::failed(
+            Class::Unclassified,
+            &format!("could not find the path of miyu-antigravity itself, which agy must start as its tool server: {error}"),
+        )
+    })?;
+    let registration = Registration {
+        program,
+        timeout_seconds: job.config.tool_wait.as_secs() + 60,
+        tools: job.declared.iter().map(|tool| tool.name.clone()).collect(),
     };
-    if let Some(home) = workspace::home()
-        && let Err(error) = agent::touch(&home, &agent)
-    {
-        eprintln!(
-            "call {}: could not touch agy agent {agent}: {error}",
-            job.call
-        );
-    }
-    let input = agy::stdin_texts(&texts);
-    let mut turn = Turn::new(&agent);
-    let ended = talk(
-        job.out,
-        job.call,
-        &live,
-        &mut turn,
-        input.clone(),
-        job.signals,
-        job.sender,
-    );
-    match ended {
-        Ended::Answer(answer) if succeeded(&answer) => {
-            job.registry.release(id, live, incoming.messages.clone());
-            Ok(with_sent(answer, &input))
-        }
-        Ended::Answer(answer) => {
-            job.registry.forget(id);
-            drop(live);
-            Ok(answer)
-        }
-        Ended::Silent(answer) => {
-            let pid = live.pid();
-            job.registry.forget(id);
-            drop(live);
-            Err(format!("the kept agy (pid {pid}) was gone ({answer})"))
-        }
-    }
+    mcp_config::register(&mcp_config::path(home), &registration).map_err(|error| {
+        turn::failed(
+            Class::Unclassified,
+            &format!("could not register Miyu's tool server in agy's MCP configuration ({error}); fix or remove that file and try again"),
+        )
+    })?;
+    Ok(Some(wiring))
 }
 
 /// 新开一段 agy 对话：整份转写 `whole` 发过去。成功了、认得出对话（`incoming`）的登记进表，agy 留着；别的都收掉。
@@ -260,6 +288,10 @@ fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
     if let Ok(Signal::Cancel) = job.signals.try_recv() {
         return cancelled();
     }
+    let wiring = match wire(job, &home) {
+        Ok(wiring) => wiring,
+        Err(answer) => return answer,
+    };
     let work = match workspace::state_dir().and_then(|state| workspace::create_work_dir(&state)) {
         Ok(work) => work,
         Err(error) => {
@@ -269,7 +301,7 @@ fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
             );
         }
     };
-    let mut live = match Live::start(job.config, job.model, &agent, work.clone(), home) {
+    let mut live = match Live::start(job.config, job.model, &agent, work.clone(), home, wiring) {
         Ok(live) => live,
         Err(error) => {
             if let Err(error) = workspace::remove_work_dir(&work) {
@@ -284,19 +316,26 @@ fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
     };
     let input = agy::stdin_line(whole);
     let mut turn = Turn::new(&agent);
-    let answer = talk(
+    let ended = talk(
         job.out,
         job.call,
         &live,
         &mut turn,
-        input.clone(),
         job.signals,
         job.sender,
-    )
-    .into_answer();
+        write_input(&live, input.clone()),
+    );
     if let Some(conversation) = turn.conversation() {
         live.set_conversation(conversation);
     }
+    let handed = matches!(ended, Ended::Handed(..));
+    let answer = match ended {
+        Ended::Handed(answer, pending) => {
+            live.set_pending(pending);
+            answer
+        }
+        other => other.into_answer(),
+    };
     if !succeeded(&answer) {
         drop(live);
         return answer;
@@ -308,6 +347,7 @@ fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
                 messages: incoming.messages,
                 agent,
                 used: Instant::now(),
+                pending: handed,
             },
             live,
         ),
