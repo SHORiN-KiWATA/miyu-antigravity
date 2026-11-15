@@ -17,6 +17,7 @@ pub mod call;
 pub mod config;
 pub mod failure;
 pub mod live;
+pub mod mcp_config;
 pub mod models;
 pub mod process;
 pub mod registry;
