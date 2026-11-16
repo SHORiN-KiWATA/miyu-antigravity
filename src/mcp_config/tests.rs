@@ -148,7 +148,6 @@ fn a_file_that_cannot_be_understood_is_never_overwritten() {
             r#"{"mcpServers": "oops"}"#,
             "\"mcpServers\" is not a JSON object",
         ),
-        ("empty", "", "not valid JSON"),
     ] {
         let file = dir.join(format!("{name}.json"));
         std::fs::write(&file, content).unwrap();
@@ -235,5 +234,31 @@ fn the_existing_file_mode_is_kept() {
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(register(&file, &entry(&["a"])).unwrap());
     assert_eq!(std::fs::metadata(&file).unwrap().mode() & 0o777, 0o600);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// agy 头一次运行自己建的那份 0 字节文件（只有空白的也算）：当成还没有服务，照常登记；注销时不动它。
+#[test]
+fn an_empty_file_counts_as_no_servers() {
+    let dir = scratch("empty");
+    for (name, content) in [("zero", ""), ("newline", "\n"), ("blank", " \t\n")] {
+        let file = dir.join(format!("{name}.json"));
+        std::fs::write(&file, content).unwrap();
+        assert!(!unregister(&file).unwrap(), "{name}：没有可拿掉的");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), content, "{name}");
+        assert!(register(&file, &entry(&["a"])).unwrap(), "{name}：写进去了");
+        let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(
+            config["mcpServers"]["miyu"]["tools"],
+            json!({"a": {"eager": true}}),
+            "{name}"
+        );
+        assert_eq!(
+            config.as_object().unwrap().len(),
+            1,
+            "{name}：只有 mcpServers"
+        );
+        assert!(unregister(&file).unwrap(), "{name}：拿掉了");
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }

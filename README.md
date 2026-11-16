@@ -29,6 +29,7 @@ miyu pkg install antigravity
 [providers.agy]
 name = "Antigravity"
 driver = "antigravity/antigravity"
+local = true            # 用的是 agy 的订阅额度：写上 Miyu 才按 0 记账，不写会照模型目录里的价算钱
 
 # 模型名照 `agy models` 的第一列写；档位（low、medium、high、xhigh）在模型名里。
 [providers.agy.models."gemini-4-hydrogen-high"]
@@ -39,7 +40,8 @@ effort = "high"         # 高档位写上：Miyu 等第一个字的时限会跟�
 chat = "agy/gemini-3.8-flash-low"
 ```
 
-价格不用写：用的是 agy 的订阅额度，Miyu 这边按 0 记。
+价格不用写，但 `local = true` 要写：Miyu 认得 `gemini-…`、`claude-…` 这些模型名，不写的话会照模型目录里的价给每一轮算钱
+（实际花的是 agy 的订阅额度）。
 
 设置项在设置页「软件包」里填：
 
@@ -91,7 +93,7 @@ miyu pkg remove antigravity
 |---|---|
 | `agy (the Antigravity CLI) was not found on PATH` | Miyu 的环境里找不到 agy：在设置里填 `antigravity.binary` |
 | 报没登录 | 在终端里跑一次 `agy` 登录 |
-| `cannot understand …/mcp_config.json` | 那份文件不是合法的 JSON：修好它，本包不会覆盖 |
+| `cannot understand …/mcp_config.json` | 那份文件不是合法的 JSON：修好它，本包不会覆盖。0.1.0 把 agy 自己建的空文件也当成了这种，升到 0.1.1 |
 | `agy called a Miyu tool, but its tool server never reached Miyu` | agy 没把本包的工具服务连上：看 `agy mcp list` 里有没有 `miyu`、是不是被关了 |
 | 工具调了、Miyu 这边却重放了整段历史 | agy 那边先判了超时，或者核心重启过：属正常，只是这一次贵一些 |
 

@@ -90,9 +90,10 @@ pub fn unregister_text(old: Option<&str>) -> Result<Option<String>, String> {
     Ok(rendered(&before, &after))
 }
 
-/// 读成 JSON 对象；文件不存在是空对象。
+/// 读成 JSON 对象；文件不存在、文件是空的（只有空白也算）都是空对象：agy 头一次运行会自己建一份 0 字节的
+/// `mcp_config.json`（agy 1.4.0 真机见过），没配过 MCP 的人手里就是这样一份，里面没有要保住的东西。
 fn parse(old: Option<&str>) -> Result<Value, String> {
-    let Some(text) = old else {
+    let Some(text) = old.filter(|text| !text.trim().is_empty()) else {
         return Ok(json!({}));
     };
     match serde_json::from_str::<Value>(text) {

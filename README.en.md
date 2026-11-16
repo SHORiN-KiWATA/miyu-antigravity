@@ -29,6 +29,7 @@ Then add a provider to `~/.miyu/etc/config.toml` by hand (an extension cannot ed
 [providers.agy]
 name = "Antigravity"
 driver = "antigravity/antigravity"
+local = true            # the calls use your agy subscription: with this Miyu counts them as 0, without it Miyu prices them from its model catalog
 
 # Model names are the first column of `agy models`; the tier (low, medium, high, xhigh) is part of the name.
 [providers.agy.models."gemini-4-hydrogen-high"]
@@ -39,7 +40,8 @@ effort = "high"         # write it for high tiers: Miyu then waits longer for th
 chat = "agy/gemini-3.8-flash-low"
 ```
 
-No prices are needed: the calls use your agy subscription, and Miyu counts them as 0.
+No prices are needed, but do write `local = true`: Miyu knows model names such as `gemini-…` and `claude-…`, and without it
+every turn is priced from the model catalog (what you actually spend is your agy subscription).
 
 Settings, on the "Packages" page of the settings:
 
@@ -100,7 +102,7 @@ miyu pkg remove antigravity
 |---|---|
 | `agy (the Antigravity CLI) was not found on PATH` | agy is not on the `PATH` Miyu runs with: set `antigravity.binary` |
 | A "not logged in" error | Run `agy` once in a terminal and log in |
-| `cannot understand …/mcp_config.json` | That file is not valid JSON: fix it; this package will not overwrite it |
+| `cannot understand …/mcp_config.json` | That file is not valid JSON: fix it; this package will not overwrite it. 0.1.0 also took the empty file agy creates itself for this: upgrade to 0.1.1 |
 | `agy called a Miyu tool, but its tool server never reached Miyu` | agy did not connect this package's tool server: check that `agy mcp list` shows `miyu` and that it is enabled |
 | A tool ran and then the whole history was replayed | agy gave up waiting first, or the core restarted: expected, that call just costs more |
 

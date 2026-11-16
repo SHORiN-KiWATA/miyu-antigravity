@@ -266,6 +266,25 @@ fn a_broken_mcp_config_fails_the_call_and_is_left_alone() {
     assert_eq!(core.work_dirs_left(), 0);
 }
 
+/// 文件是 0 字节的（agy 头一次运行自己建的就是这样）：照常登记、照常调用。
+#[test]
+fn an_empty_mcp_config_is_filled_in_and_the_call_goes_through() {
+    let mut core = Core::start("t-empty", "plan:one");
+    let file = core.home.join(".gemini/config/mcp_config.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "").unwrap();
+    core.call("r1", "d1", &tool_request("s", "go"));
+    let one = core.collect("r1", "d1");
+    assert!(
+        one.response["result"].get("error").is_none(),
+        "{}",
+        one.response
+    );
+    let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(config["mcpServers"]["miyu"]["args"], json!(["mcp"]));
+    assert_eq!(core.records().len(), 1, "起了 agy");
+}
+
 /// 套接字起不来（路径太长）：扩展不退出，不带工具的照常，带工具的回出错、原话带原因。
 #[test]
 fn when_the_socket_cannot_be_made_only_calls_with_tools_fail() {
