@@ -4,7 +4,7 @@
 [package]
 version = "0.1.2"
 protocol = [1, 1]
-miyu = "2026.11.0"
+miyu = "2026.11.0-rc.2.4"
 name = { en = "Antigravity", zh = "Antigravity" }
 summary = { en = "Use the local Antigravity CLI (agy) as a model provider", zh = "把本机的 Antigravity CLI（agy）当模型供应商" }
 author = "SHORiN-KiWATA"
