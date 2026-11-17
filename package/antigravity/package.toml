@@ -11,7 +11,8 @@ author = "SHORiN-KiWATA"
 upstream = "https://github.com/SHORiN-KiWATA/miyu-antigravity"
 license = "AGPL-3.0-or-later"
 icon = "rocket"
-# 带本机程序；进程组、信号照 Unix 写，第一版只打 Linux、macOS 的包（设计第十二节）。
+# 带本机程序；进程组、信号照 Unix 写，只支持 Linux、macOS，不做 Windows（设计第十二节）。
+systems = ["linux", "macos"]
 targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64"]
 
 [command]
@@ -32,6 +33,12 @@ key = "none"
 images = false
 # agy 自己跑完、Miyu 只照实显示的工具（设计第七节）：代理文件的白名单只开这一件。
 hosted = ["search_web"]
+
+# 自带的一家供应商（设计第十四节第 1 条）：装上、开着就在主人的供应商列表里，模型写成 antigravity/<模型>，列表照
+# driver.models 拉。不写 local：金额照模型目录的 API 价显示（主人定的），想按 0 记的主人自己写。
+[providers.antigravity]
+name = { en = "Antigravity", zh = "Antigravity" }
+driver = "antigravity/antigravity"
 
 [settings.binary]
 type = "text"

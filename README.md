@@ -13,7 +13,7 @@ agy 在这里只当模型用：读文件、跑命令、改文件这些工具照�
 ## 要先有什么
 
 - Antigravity CLI 1.4.0 或更新，已经登录：在终端里跑一次 `agy`，能正常对话就行。
-- Miyu 核心要认得「供应商侧工具」（清单 `[[driver]]` 的 `hosted`）；太旧的核心装不上这个包。
+- Miyu 核心要认得「包自带供应商」（清单的 `[providers.<编号>]`）；太旧的核心装不上这个包。
 
 ## 装和配
 
@@ -23,27 +23,23 @@ miyu pkg install antigravity
 
 装的时候会问你批不批它的两样能力：提供模型驱动、联网（agy 自己连 Google 的服务）。
 
-然后加一家用这个驱动的供应商（扩展自己改不了供应商的配置，所以这一步要你来）。编号随你起，下面用 `agy`：
+装上以后，供应商列表里就多了一家 **Antigravity**（编号 `antigravity`），不用自己配：在对话里用 `/model` 选它的模型
+（`antigravity/gemini-3.8-flash-low` 这样），或者把它设成默认模型。模型列表是本包跑 `agy models` 要来的，档位（low、medium、
+high、xhigh）在模型名里。卸掉、关掉这个包，这一家就没有了。
 
-```bash
-miyu config set providers.agy.driver antigravity/antigravity
-miyu config set providers.agy.name Antigravity        # 界面上显示的名字，可以不写
-```
-
-之后在对话里用 `/model` 就能选到它的模型（`agy/gemini-3.8-flash-low` 这样）：列表是本包跑 `agy models` 要来的，档位
-（low、medium、high、xhigh）在模型名里。不想敲命令的，在终端界面里也能加：`/config` →「供应商和模型」→ 按 `a` →「自定义…」，ID 填 `agy`，「接口」切到
-`antigravity/antigravity`，地址和密钥空着，保存。
-
-个别模型要另写窗口、推理档位的，在 `~/.miyu/etc/config.toml` 里加模型条目：
+要改这一家的设置（名字、个别模型的窗口和推理档位），写在你自己的配置里，会盖住包给的：
 
 ```toml
-[providers.agy.models."gemini-4-hydrogen-high"]
+[providers.antigravity.models."gemini-4-hydrogen-high"]
 window = 1000000        # agy 不报窗口，要准的话照这个模型实际的写
 effort = "high"         # 高档位写上：Miyu 等第一个字的时限会跟着放宽，见「要知道的」
 ```
 
+0.1.1 那时照说明手建过一家（`providers.agy`）的，可以删掉它（`miyu config unset providers.agy.driver`），用包自带的这一家。
+这一版要认得「包自带供应商」的核心：太旧的核心装不上（报清单里有不认识的表 `[providers]`），先升级核心。
+
 金额：Miyu 认得 `gemini-…`、`claude-…` 这些模型名，会照模型目录里的 API 价给每一轮算一个金额，实际花的是 agy 的订阅额度。
-想让它按 0 记的，加一句 `miyu config set providers.agy.local true`。
+想让它按 0 记的，加一句 `miyu config set providers.antigravity.local true`。
 
 设置项在设置页「软件包」里填：
 

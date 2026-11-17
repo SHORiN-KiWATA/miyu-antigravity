@@ -13,7 +13,7 @@ Linux and macOS only. The design and the measurements behind it are in [docs/00-
 ## Requirements
 
 - Antigravity CLI 1.4.0 or newer, logged in: run `agy` once in a terminal and check that it answers.
-- A Miyu core that knows "hosted tools" (`hosted` under `[[driver]]` in the manifest). Older cores cannot install this package.
+- A Miyu core that knows package-shipped providers (`[providers.<id>]` in the manifest). Older cores cannot install this package.
 
 ## Install and configure
 
@@ -23,30 +23,27 @@ miyu pkg install antigravity
 
 Installing asks you to approve two capabilities: providing a model driver, and network access (agy talks to Google's services).
 
-Then add a provider that uses this driver (an extension cannot change provider settings itself, so this step is yours). Pick
-any id; `agy` is used below:
+Once installed, your provider list has one more entry, **Antigravity** (id `antigravity`), with nothing to configure: choose
+one of its models with `/model` in a conversation (such as `antigravity/gemini-3.8-flash-low`), or make one your default
+model. The model list comes from `agy models`, and the tier (low, medium, high, xhigh) is part of the model name. Removing or
+disabling the package takes the provider away again.
 
-```bash
-miyu config set providers.agy.driver antigravity/antigravity
-miyu config set providers.agy.name Antigravity        # the name shown in the interface; optional
-```
-
-After that `/model` in a conversation lists its models (such as `agy/gemini-3.8-flash-low`): the list comes from `agy models`,
-and the tier (low, medium, high, xhigh) is part of the model name. The terminal interface can do the same without commands:
-`/config`, "Providers and models", press `a`, "Custom…", enter `agy` as the ID, switch "Interface" to
-`antigravity/antigravity`, leave the address and the key empty, and save.
-
-To give a model its own context window or reasoning effort, add a model entry to `~/.miyu/etc/config.toml`:
+To change this provider (its name, or a model's context window and reasoning effort), write it in your own configuration;
+it overrides what the package ships:
 
 ```toml
-[providers.agy.models."gemini-4-hydrogen-high"]
+[providers.antigravity.models."gemini-4-hydrogen-high"]
 window = 1000000        # agy does not report the window; write the model's real one if it matters
 effort = "high"         # write it for high tiers: Miyu then waits longer for the first token, see "Good to know"
 ```
 
+If you created a provider by hand for 0.1.1 (`providers.agy`), you can remove it (`miyu config unset providers.agy.driver`)
+and use the one the package ships. This version needs a core that knows package-shipped providers: an older core refuses to
+install it (it reports an unknown table `[providers]` in the manifest); upgrade the core first.
+
 Amounts: Miyu knows model names such as `gemini-…` and `claude-…` and shows an amount for every turn at the API price from its
 model catalog; what you actually spend is your agy subscription. To have it counted as 0, run
-`miyu config set providers.agy.local true`.
+`miyu config set providers.antigravity.local true`.
 
 Settings, on the "Packages" page of the settings:
 
