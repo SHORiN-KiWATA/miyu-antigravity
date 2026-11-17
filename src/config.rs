@@ -1,7 +1,8 @@
 //! 这个包自己的配置项（清单 `[settings.binary]`、`[settings.keep_seconds]`、`[settings.tool_wait_seconds]`，设计第九、十节）：握手的 `config` 交全的，`extension.config` 交变了的。空的字、
 //! `null` 当没设。用哪个账号不归本包管：agy 照扩展自己的 `HOME` 跑（设计第九节、第十一节第 4 条）。
 
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -91,10 +92,22 @@ impl Config {
         Ok(())
     }
 
-    /// 起 agy 用的程序。
+    /// 起 agy 用的程序。开头的 `~`（`~/…`）换成扩展自己的 `HOME`：设置页里人常这么填，原样交给系统是找不到的
+    /// （2026-11-17 主人本机验收时填的就是 `~/…`）。
     #[must_use]
     pub fn program(&self) -> PathBuf {
-        self.binary.clone().unwrap_or_else(|| PathBuf::from("agy"))
+        match &self.binary {
+            Some(binary) => expand_home(binary, std::env::var_os("HOME").as_deref()),
+            None => PathBuf::from("agy"),
+        }
+    }
+}
+
+/// `path` 的头一段正好是 `~` 的，换成 `home`；`~别人/…`、没有 `home`（或是空的）的原样。
+fn expand_home(path: &Path, home: Option<&OsStr>) -> PathBuf {
+    match (path.strip_prefix("~"), home.filter(|home| !home.is_empty())) {
+        (Ok(rest), Some(home)) => Path::new(home).join(rest),
+        _ => path.to_path_buf(),
     }
 }
 
@@ -128,6 +141,32 @@ mod tests {
         config.apply(&keys(&json!({BINARY: "/bin/agy"}))).unwrap();
         config.apply(&keys(&json!({BINARY: null}))).unwrap();
         assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn a_leading_tilde_is_the_home_folder() {
+        let home = Some(OsStr::new("/home/alice"));
+        for (written, expected) in [
+            ("~/.local/bin/agy-multi", "/home/alice/.local/bin/agy-multi"),
+            ("~", "/home/alice/"),
+            ("/usr/bin/agy", "/usr/bin/agy"),
+            ("~bob/agy", "~bob/agy"),
+            ("bin/~/agy", "bin/~/agy"),
+            ("agy", "agy"),
+        ] {
+            assert_eq!(
+                expand_home(Path::new(written), home),
+                PathBuf::from(expected),
+                "{written}"
+            );
+        }
+        for home in [None, Some(OsStr::new(""))] {
+            assert_eq!(
+                expand_home(Path::new("~/agy"), home),
+                PathBuf::from("~/agy"),
+                "没有家目录的原样"
+            );
+        }
     }
 
     #[test]
