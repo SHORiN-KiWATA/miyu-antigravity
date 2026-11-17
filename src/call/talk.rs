@@ -79,6 +79,11 @@ pub fn talk(
     start: impl FnOnce() -> Result<(), String>,
 ) -> Ended {
     live.route(sender.clone());
+    // agy 在「看过它还活着」和「接上路由」之间退了的：读输出的线程已经记下 `closed`、把最后一条送给了没人听的路由，这一轮
+    // 再也等不来信号。接上以后再看一眼，自己补这一条（读线程是先记 `closed` 再送的，所以要么这里看得到，要么它送得到）。
+    if live.closed() {
+        sender.send(Signal::Closed).ok();
+    }
     let source = Transcripts {
         live,
         home: live.home().to_path_buf(),
