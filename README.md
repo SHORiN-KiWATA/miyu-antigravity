@@ -23,35 +23,40 @@ miyu pkg install antigravity
 
 装的时候会问你批不批它的两样能力：提供模型驱动、联网（agy 自己连 Google 的服务）。
 
-然后在 `~/.miyu/etc/config.toml` 里手写一家供应商（扩展改不了配置）：
+然后加一家用这个驱动的供应商（扩展自己改不了供应商的配置，所以这一步要你来）。编号随你起，下面用 `agy`：
 
-```toml
-[providers.agy]
-name = "Antigravity"
-driver = "antigravity/antigravity"
-local = true            # 用的是 agy 的订阅额度：写上 Miyu 才按 0 记账，不写会照模型目录里的价算钱
-
-# 模型名照 `agy models` 的第一列写；档位（low、medium、high、xhigh）在模型名里。
-[providers.agy.models."gemini-4-hydrogen-high"]
-window = 1000000        # agy 不报窗口，照这个模型实际的写；不写的话 Miyu 不会提前压缩上下文
-effort = "high"         # 高档位写上：Miyu 等第一个字的时限会跟着放宽，见「要知道的」
-
-[models]
-chat = "agy/gemini-3.8-flash-low"
+```bash
+miyu config set providers.agy.driver antigravity/antigravity
+miyu config set providers.agy.name Antigravity        # 界面上显示的名字，可以不写
 ```
 
-价格不用写，但 `local = true` 要写：Miyu 认得 `gemini-…`、`claude-…` 这些模型名，不写的话会照模型目录里的价给每一轮算钱
-（实际花的是 agy 的订阅额度）。
+之后在对话里用 `/model` 就能选到它的模型（`agy/gemini-3.8-flash-low` 这样）：列表是本包跑 `agy models` 要来的，档位
+（low、medium、high、xhigh）在模型名里。不想敲命令的，在终端界面里也能加：`/config` →「供应商和模型」→ 按 `a` →「自定义…」，ID 填 `agy`，「接口」切到
+`antigravity/antigravity`，地址和密钥空着，保存。
+
+个别模型要另写窗口、推理档位的，在 `~/.miyu/etc/config.toml` 里加模型条目：
+
+```toml
+[providers.agy.models."gemini-4-hydrogen-high"]
+window = 1000000        # agy 不报窗口，要准的话照这个模型实际的写
+effort = "high"         # 高档位写上：Miyu 等第一个字的时限会跟着放宽，见「要知道的」
+```
+
+金额：Miyu 认得 `gemini-…`、`claude-…` 这些模型名，会照模型目录里的 API 价给每一轮算一个金额，实际花的是 agy 的订阅额度。
+想让它按 0 记的，加一句 `miyu config set providers.agy.local true`。
 
 设置项在设置页「软件包」里填：
 
-| 设置 | 默认 | 说明 |
-|---|---|---|
-| `antigravity.binary` | 空 | agy 的完整路径。空着在 `PATH` 里找 |
-| `antigravity.keep_seconds` | 600 | 一段对话说完以后，agy 进程留着等下一轮多久 |
-| `antigravity.tool_wait_seconds` | 3600 | agy 把一次工具调用交回 Miyu 后最多等多久。Miyu 执行工具、等你点确认的时间都算在里面 |
+| 设置 | 键 | 默认 | 说明 |
+|---|---|---|---|
+| 可执行文件路径 | `antigravity.binary` | 空 | agy（或包着它的脚本）的完整路径，开头的 `~` 是家目录。空着在 `PATH` 里找 `agy` |
+| 对话结束后进程保留时长（秒） | `antigravity.keep_seconds` | 600 | 一轮对话说完以后，agy 进程留着等同一段对话下一轮多久。0 是不保留 |
+| 工具调用超时时长（秒） | `antigravity.tool_wait_seconds` | 3600 | agy 把一次工具调用交回 Miyu 后最多等多久。Miyu 执行工具、等你点确认的时间都算在里面 |
 
-用哪个账号不归本包管：agy 照 Miyu 的 `HOME` 跑，用的是 `~/.gemini` 里的登录。
+用哪个账号不归本包管：agy 照 Miyu 的 `HOME` 跑，用的是 `~/.gemini` 里的登录。「可执行文件路径」也可以指向你自己包着 agy 的
+脚本（比如按账号分流的）：脚本要把参数、标准输入输出原样交给 agy。脚本给 agy 换了 `HOME` 的也行，只要那个家目录的
+`.gemini/config` 和真家目录的是同一份（软链过去）——系统提示词和工具服务是写在那里的；agy 的会话文件落在哪个家目录，本包
+跟到哪个家目录去读、去删。
 
 ## 它会往 agy 的配置里写什么
 

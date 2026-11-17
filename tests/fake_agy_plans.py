@@ -20,6 +20,8 @@ PLANS = {
     "replay": [[[("text", "Let me look. "), PLAN_CALL, ("text", "after")]], [[("text", "replayed")]]],
     # 挂着时自己说话：等 speak 文件出现再发 ERROR 加正文。
     "speaks": [[[("text", "Let me look. "), ("callnw", "bash", {"command": "ls"}), ("speak",)]], [[("text", "replayed")]]],
+    # 不带工具的请求里调一件全局配置里别的对话登记的工具；之后说一句。
+    "call-unlisted": [[[("text", "Let me look. "), ("mcp-only", "x", {"a": 1}), ("text", "done")]]],
     # 只发工具步 ACTIVE，不调。
     "stream-only": [[[("text", "Let me look. "), ("active", "bash", {"command": "ls"}), ("hold",)]]],
     # 只调，不发工具步 ACTIVE。

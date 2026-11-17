@@ -33,6 +33,12 @@ pub trait Handler: Send + Sync + 'static {
     /// 一次工具调用。**马上返回**：`reply` 存起来，结果好了再 [`Reply::send`]；口令不认识调 [`Reply::refuse`]。
     /// 丢掉 `reply` 而没回话，连接直接关掉，客户端读到头。
     fn call(&self, token: &str, name: &str, arguments: Value, reply: Reply);
+
+    /// 请求里带了 `"home"`（经 [`super::home_of`] 验过：绝对路径）：这个口令的 MCP 服务实际用的家目录。在 `list`、`call` 之前调；
+    /// 口令不认识的处理者不该理。不关心的处理者不必实现。
+    fn home(&self, token: &str, home: &Path) {
+        let _ = (token, home);
+    }
 }
 
 /// 一条等着回话的 `call` 连接。可以存起来、移到别的线程上回。
@@ -209,15 +215,18 @@ fn accept_loop(listener: &UnixListener, stop: &AtomicBool, handler: &Arc<impl Ha
 enum Request {
     List {
         token: String,
+        home: Option<PathBuf>,
     },
     Call {
         token: String,
         name: String,
         arguments: Value,
+        home: Option<PathBuf>,
     },
 }
 
-/// 验第一行的写法：对象、`token` 是字、`op` 是 `list` 或 `call`、`call` 有字的 `name`（没有 `arguments` 当 `{}`）。
+/// 验第一行的写法：对象、`token` 是字、`op` 是 `list` 或 `call`、`call` 有字的 `name`（没有 `arguments` 当 `{}`）；可选的 `home`
+/// 照 [`super::home_of`]，不合格的当没带。
 fn parse(line: &str) -> Result<Request, String> {
     let value: Value = serde_json::from_str(line).map_err(|error| format!("not JSON: {error}"))?;
     let token = value
@@ -225,8 +234,9 @@ fn parse(line: &str) -> Result<Request, String> {
         .and_then(Value::as_str)
         .ok_or("missing token")?
         .to_string();
+    let home = super::home_of(&value);
     match value.get("op").and_then(Value::as_str) {
-        Some("list") => Ok(Request::List { token }),
+        Some("list") => Ok(Request::List { token, home }),
         Some("call") => Ok(Request::Call {
             token,
             name: value
@@ -235,6 +245,7 @@ fn parse(line: &str) -> Result<Request, String> {
                 .ok_or("missing name")?
                 .to_string(),
             arguments: value.get("arguments").cloned().unwrap_or_else(|| json!({})),
+            home,
         }),
         _ => Err("op must be \"list\" or \"call\"".into()),
     }
@@ -255,17 +266,25 @@ fn serve_connection(stream: UnixStream, handler: &dyn Handler) -> std::io::Resul
     reply.stream.set_read_timeout(None)?;
     match parse(&line) {
         Err(message) => reply.refuse(&format!("bad request: {message}")),
-        Ok(Request::List { token }) => match handler.list(&token) {
-            Some(tools) => {
-                reply.write(&json!({"tools": tools.iter().map(Tool::to_json).collect::<Vec<_>>()}))
+        Ok(Request::List { token, home }) => {
+            if let Some(home) = home {
+                handler.home(&token, &home);
             }
-            None => reply.refuse(UNKNOWN_TOKEN),
-        },
+            match handler.list(&token) {
+                Some(tools) => reply
+                    .write(&json!({"tools": tools.iter().map(Tool::to_json).collect::<Vec<_>>()})),
+                None => reply.refuse(UNKNOWN_TOKEN),
+            }
+        }
         Ok(Request::Call {
             token,
             name,
             arguments,
+            home,
         }) => {
+            if let Some(home) = home {
+                handler.home(&token, &home);
+            }
             let closed = Arc::clone(&reply.closed);
             handler.call(&token, &name, arguments, reply);
             watch(&mut reader, &closed);
@@ -285,3 +304,6 @@ fn watch(reader: &mut impl Read, closed: &AtomicBool) {
     }
     closed.store(true, Ordering::Release);
 }
+
+#[cfg(test)]
+mod tests;

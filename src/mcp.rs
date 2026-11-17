@@ -144,12 +144,19 @@ fn initialize_result(params: &Value) -> Value {
     })
 }
 
+/// 本进程环境里的 `HOME`（agy 的环境传下来的，也就是 agy 实际用的家目录），能报的才有（[`bridge::home_from`]）：每次请求都带给
+/// 扩展，扩展照它找 agy 的对话数据。
+fn own_home() -> Option<PathBuf> {
+    bridge::home_from(std::env::var_os("HOME"))
+}
+
 /// `tools/list` 的结果：没有套接字、连不上、对面拒绝、回话没有 `tools` 数组，都是空表（记一行到标准错误）。
 fn list_result(bridge: Option<&Bridge>) -> Value {
     let Some(bridge) = bridge else {
         return json!({"tools": []});
     };
-    match client::exchange(&bridge.path, &bridge::list_request(&bridge.token)) {
+    let request = bridge::with_home(bridge::list_request(&bridge.token), own_home().as_deref());
+    match client::exchange(&bridge.path, &request) {
         Ok(reply) => match reply.get("tools") {
             Some(tools) if tools.is_array() => json!({"tools": tools}),
             _ => {
@@ -169,10 +176,11 @@ fn call_result(bridge: Option<&Bridge>, name: &str, arguments: &Value) -> Value 
     let Some(bridge) = bridge else {
         return tool_failure(words::MCP_NO_BRIDGE);
     };
-    match client::exchange(
-        &bridge.path,
-        &bridge::call_request(&bridge.token, name, arguments),
-    ) {
+    let request = bridge::with_home(
+        bridge::call_request(&bridge.token, name, arguments),
+        own_home().as_deref(),
+    );
+    match client::exchange(&bridge.path, &request) {
         Ok(reply) => match reply.get("content") {
             Some(content) if content.is_array() => json!({
                 "content": content,

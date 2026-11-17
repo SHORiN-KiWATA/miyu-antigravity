@@ -10,7 +10,7 @@ use serde_json::json;
 use crate::support::{Core, WAIT, assert_conversation_removed, request, wait_gone};
 
 /// agy 那边一段对话的文件：`conversations/<编号>.db*` 和 `brain/<编号>/`。
-fn conversation_files(home: &Path, conversation: &str) -> Vec<PathBuf> {
+pub fn conversation_files(home: &Path, conversation: &str) -> Vec<PathBuf> {
     let base = home.join(".gemini/antigravity-cli");
     let mut files: Vec<PathBuf> = [".db", ".db-shm", ".db-wal"]
         .iter()

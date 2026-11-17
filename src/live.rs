@@ -6,8 +6,9 @@
 //!   「乱说话了」（[`Live::stray`]）。读到头（agy 退了）记下来（[`Live::closed`]），巡检和下一轮照它发现进程没了。
 //! - 带工具的（[`Wiring`]）：起的时候把套接字地址和口令放进环境变量，总台（[`crate::hub`]）照口令找到这一个进程的路由和工具表；
 //!   一轮以交回一件工具调用结束时，这件调用的 [`Reply`] 跟着 [`Live`] 挂着（[`Live::set_pending`]），等下一次请求带结果来。
-//! - 收掉（丢掉这个值时）：收进程组，删工作目录和 agy 那边这段对话的文件（设计第八节「清理」）。
-//! - 得知对话编号时在状态目录里记一个号（[`leftovers::mark`]），扩展被硬杀了，下一个扩展进程启动时照它清会话文件；
+//! - 收掉（丢掉这个值时）：收进程组，删工作目录和 agy 那边这段对话的文件（设计第八节「清理」）。agy 的 MCP 服务报过家目录的
+//!   （包装脚本给 agy 换了 `HOME`），读转录、删会话文件都照它（[`Live::agy_home`]）。
+//! - 得知对话编号时在状态目录里记一个号（[`crate::leftovers::mark_with_home`]，由 [`AgyHome`] 管），扩展被硬杀了，下一个扩展进程启动时照它清会话文件；
 //!   会话文件删干净了记号才删。
 
 use std::io::{BufReader, Write};
@@ -18,12 +19,13 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
+use crate::agy_home::AgyHome;
 use crate::bridge::{self, Reply};
 use crate::call::Signal;
 use crate::config::Config;
 use crate::hub::Wiring;
 use crate::process::{self, Line};
-use crate::{agy, leftovers, workspace};
+use crate::{agy, workspace};
 
 /// 读的线程把这一行送给谁。
 pub type Route = Arc<Mutex<Option<Sender<Signal>>>>;
@@ -56,12 +58,10 @@ pub struct Live {
     conversation: Option<String>,
     /// 给它新建的工作目录。
     work: PathBuf,
-    /// 它跑在哪个家目录下（会话文件在这里）。
+    /// 扩展自己的家目录（`HOME`）。
     home: PathBuf,
-    /// 扩展的状态目录（记号放在它下面）。
-    state: PathBuf,
-    /// 已经记了号的对话编号。
-    marked: Mutex<Option<String>>,
+    /// agy 实际用的家目录（会话文件、转录在这里）、记号。
+    agy_home: Arc<AgyHome>,
 }
 
 impl std::fmt::Debug for Live {
@@ -111,10 +111,11 @@ impl Live {
         }
         let mut child = process::spawn(command)?;
         let pid = child.id();
-        let (route, stray) = match &wiring {
-            Some(wiring) => (wiring.route(), wiring.stray()),
-            None => (Route::default(), Arc::default()),
+        let (route, stray, reported) = match &wiring {
+            Some(wiring) => (wiring.route(), wiring.stray(), wiring.reported()),
+            None => (Route::default(), Arc::default(), Arc::default()),
         };
+        let agy_home = AgyHome::new(home.clone(), state, pid, &reported);
         let closed = Arc::new(AtomicBool::new(false));
         let (input, lines) = mpsc::channel();
         let writer = child
@@ -144,8 +145,7 @@ impl Live {
             conversation: None,
             work,
             home,
-            state,
-            marked: Mutex::new(None),
+            agy_home,
         })
     }
 
@@ -161,10 +161,17 @@ impl Live {
         self.conversation.as_deref()
     }
 
-    /// 它跑在哪个家目录下（agy 的转录在这里）。
+    /// 扩展自己的家目录（`HOME`，代理文件、`mcp_config.json` 在这里）。
     #[must_use]
     pub fn home(&self) -> &std::path::Path {
         &self.home
+    }
+
+    /// agy 实际用的家目录（它的转录、会话文件在这里）：它的 MCP 服务报过的用报的（包装脚本给 agy 换了 `HOME` 的情况），没报过的
+    /// （请求不带工具、没起工具服务）是扩展自己的 [`Live::home`]。用的时候现取：工具服务可能在一轮里才报到。
+    #[must_use]
+    pub fn agy_home(&self) -> PathBuf {
+        self.agy_home.current()
     }
 
     /// 记下 agy 这段对话的编号（收尾时删它的文件），并记号。
@@ -173,29 +180,11 @@ impl Live {
         self.note_conversation(conversation);
     }
 
-    /// 刚得知对话编号 `conversation`（`init` 才到、这一轮还没完）：在状态目录里记号，扩展这时被硬杀了也有人知道该清哪段。
-    /// 编号不合 [`workspace::valid_conversation`] 的不记；已经记过的不重复写；写不了的记一行日志，不影响调用。
+    /// 刚得知对话编号 `conversation`（`init` 才到、这一轮还没完）：在状态目录里记号，扩展这时被硬杀了也有人知道该清哪段
+    /// （[`AgyHome::note_conversation`]）。编号不合 [`workspace::valid_conversation`] 的不记；已经记过的不重复写；写不了的记一行日志，
+    /// 不影响调用。
     pub fn note_conversation(&self, conversation: &str) {
-        let mut marked = self.marked.lock().unwrap_or_else(PoisonError::into_inner);
-        if marked.as_deref() == Some(conversation) || !workspace::valid_conversation(conversation) {
-            return;
-        }
-        match leftovers::mark(&self.state, conversation) {
-            Ok(()) => {
-                if let Some(old) = marked.replace(conversation.to_string())
-                    && let Err(error) = leftovers::unmark(&self.state, &old)
-                {
-                    eprintln!(
-                        "agy (pid {}): could not remove the mark of {old}: {error}",
-                        self.child.id()
-                    );
-                }
-            }
-            Err(error) => eprintln!(
-                "agy (pid {}): could not mark its conversation {conversation}: {error}",
-                self.child.id()
-            ),
-        }
+        self.agy_home.note_conversation(conversation);
     }
 
     /// 之后读到的每一行送给 `to`（这一轮在听的那一次调用）。
@@ -271,27 +260,20 @@ impl Drop for Live {
             );
         }
         let removed = match &self.conversation {
-            Some(conversation) => workspace::remove_conversation(&self.home, conversation)
-                .inspect_err(|error| {
-                    eprintln!(
-                        "agy (pid {pid}): could not remove its conversation {conversation}: {error}"
-                    );
-                })
-                .is_ok(),
+            Some(conversation) => workspace::remove_conversation(
+                &self.agy_home.current(),
+                conversation,
+            )
+            .inspect_err(|error| {
+                eprintln!(
+                    "agy (pid {pid}): could not remove its conversation {conversation}: {error}"
+                );
+            })
+            .is_ok(),
             None => true,
         };
         // 会话文件没删干净的，记号留着：下次启动的清扫再试一次。
-        let marked = self
-            .marked
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if removed
-            && let Some(marked) = marked
-            && let Err(error) = leftovers::unmark(&self.state, &marked)
-        {
-            eprintln!("agy (pid {pid}): could not remove the mark of {marked}: {error}");
-        }
+        self.agy_home.finish(removed);
     }
 }
 

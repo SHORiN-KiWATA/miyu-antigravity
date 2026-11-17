@@ -8,7 +8,6 @@
 //! 工具调用有两边：流里的工具步 `ACTIVE` 和 MCP 服务转来的 `tools/call`（[`Signal::ToolCall`]），谁先到都可能。第一边到了就开始
 //! 掐表（[`PAIR_WAIT`]），到点还没等到另一边就照 [`Turn::timeout`]。等的时候流里来了别的事照常处理。
 
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -86,7 +85,6 @@ pub fn talk(
     }
     let source = Transcripts {
         live,
-        home: live.home().to_path_buf(),
         conversation: live.conversation().map(str::to_string),
     };
     let ended = match start() {
@@ -116,11 +114,11 @@ pub fn write_input(live: &Live, input: String) -> impl FnOnce() -> Result<(), St
     }
 }
 
-/// 去哪读 agy 的转录：它跑在哪个家目录下，和（复用的进程这一轮不发 `init`）`Live` 记着的对话编号。
+/// 去哪读 agy 的转录：它实际用的家目录（[`Live::agy_home`]，真去读的那一刻才取：工具服务可能在这一轮里才报到），和（复用的
+/// 进程这一轮不发 `init`）`Live` 记着的对话编号。
 struct Transcripts<'a> {
     /// 这一轮说话的 agy：得知它的对话编号时记号。
     live: &'a Live,
-    home: PathBuf,
     conversation: Option<String>,
 }
 
@@ -140,7 +138,7 @@ impl Transcripts<'_> {
             return;
         };
         step.output = brain::read_waiting(
-            &self.home,
+            &self.live.agy_home(),
             conversation,
             step.step_index,
             brain::WAIT,

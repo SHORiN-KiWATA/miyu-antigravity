@@ -6,7 +6,9 @@
 //! 1. 套接字目录（`MIYU_RUNTIME_DIR`，没有用 `MIYU_STATE_DIR`）下的 `antigravity-<进程号>.sock`；
 //! 2. `<MIYU_STATE_DIR>/work/<进程号>-…` 工作目录（[`crate::workspace::create_work_dir`]）；
 //! 3. agy 记下的对话（`conversations/<编号>.db*`、`brain/<编号>/`）：编号只有那个进程知道，所以得知编号时在
-//!    `<MIYU_STATE_DIR>/kept/<编号>` 记一个小文件，内容是扩展的进程号（十进制一行）；收尾删完会话文件以后记号也删（[`mark`]、
+//!    `<MIYU_STATE_DIR>/kept/<编号>` 记一个小文件：头一行是扩展的进程号（十进制）；第二行（可选）是 agy 实际用的家目录——
+//!    包装脚本给 agy 换了 `HOME` 的时候，会话文件在那里（[`crate::agy_home`]）。第二行是绝对路径的清扫时照它删，没有（老版本留下的
+//!    记号只有一行）或者不是绝对路径的照扩展自己的 `HOME`。收尾删完会话文件以后记号也删（[`mark`]、[`mark_with_home`]、
 //!    [`unmark`]）。
 //!
 //! 启动时清扫一次（[`sweep`]）：名字里的、记号里的进程号不是自己、而且那个进程已经不在了的，照名字删。「不在了」用
@@ -14,6 +16,7 @@
 //! 那个进程号再空出来的那次启动；宁可漏清，不错删。自己的进程号的东西、名字对不上这几种格式的文件，一概不碰。整件事出任何错
 //! 只记日志，不挡着启动。
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -29,12 +32,26 @@ pub fn kept_dir(state: &Path) -> PathBuf {
     state.join("kept")
 }
 
-/// 记一下：对话 `conversation` 是本进程的 agy 在用的。先写临时文件再改名，别的进程读到的不会是半个。
+/// 记一下：对话 `conversation` 是本进程的 agy 在用的，会话文件在扩展自己的 `HOME` 下（只写进程号一行）。
+///
+/// # Errors
+///
+/// 同 [`mark_with_home`]。
+pub fn mark(state: &Path, conversation: &str) -> std::io::Result<()> {
+    mark_with_home(state, conversation, None)
+}
+
+/// 同 [`mark`]；`agy_home` 是 `Some`（agy 实际用的家目录，和扩展自己的不一样）的再写第二行。先写临时文件再改名，别的进程读到的
+/// 不会是半个；已经有的记号这样重写也不会丢（补写用）。
 ///
 /// # Errors
 ///
 /// 编号不合 [`workspace::valid_conversation`]、写不了：原样交。
-pub fn mark(state: &Path, conversation: &str) -> std::io::Result<()> {
+pub fn mark_with_home(
+    state: &Path,
+    conversation: &str,
+    agy_home: Option<&Path>,
+) -> std::io::Result<()> {
     if !workspace::valid_conversation(conversation) {
         return Err(std::io::Error::other(format!(
             "conversation id {conversation:?} is not letters, digits and '-'"
@@ -43,7 +60,11 @@ pub fn mark(state: &Path, conversation: &str) -> std::io::Result<()> {
     let dir = kept_dir(state);
     std::fs::create_dir_all(&dir)?;
     let temporary = dir.join(format!(".{conversation}.tmp"));
-    let written = std::fs::write(&temporary, format!("{}\n", std::process::id()))
+    let content = match agy_home {
+        Some(home) => format!("{}\n{}\n", std::process::id(), home.display()),
+        None => format!("{}\n", std::process::id()),
+    };
+    let written = std::fs::write(&temporary, content)
         .and_then(|()| std::fs::rename(&temporary, dir.join(conversation)));
     if written.is_err() {
         std::fs::remove_file(&temporary).ok();
@@ -114,22 +135,30 @@ fn sweep_marks(state: &Path, home: &Path, me: u32) {
             (name, content)
         })
         .collect();
+    let contents: HashMap<&str, &str> = marks
+        .iter()
+        .map(|(name, content)| (name.as_str(), content.as_str()))
+        .collect();
     for verdict in dead_marks(&marks, me, process_alive) {
         match verdict {
-            Verdict::Conversation(id) => match workspace::remove_conversation(home, &id) {
-                Ok(()) => {
-                    eprintln!(
-                        "cleaning up: removed agy's conversation {id}, left by an extension that is gone"
-                    );
-                    if let Err(error) = unmark(state, &id) {
-                        eprintln!("cleaning up: could not remove the mark of {id}: {error}");
+            Verdict::Conversation(id) => {
+                let content = contents.get(id.as_str()).copied().unwrap_or_default();
+                let at = mark_home(content);
+                match workspace::remove_conversation(at.as_deref().unwrap_or(home), &id) {
+                    Ok(()) => {
+                        eprintln!(
+                            "cleaning up: removed agy's conversation {id}, left by an extension that is gone"
+                        );
+                        if let Err(error) = unmark(state, &id) {
+                            eprintln!("cleaning up: could not remove the mark of {id}: {error}");
+                        }
+                    }
+                    // 记号留着，下次启动再试。
+                    Err(error) => {
+                        eprintln!("cleaning up: could not remove agy's conversation {id}: {error}");
                     }
                 }
-                // 记号留着，下次启动再试。
-                Err(error) => {
-                    eprintln!("cleaning up: could not remove agy's conversation {id}: {error}");
-                }
-            },
+            }
             Verdict::Unreadable(id) => {
                 eprintln!(
                     "cleaning up: the mark of conversation {id} does not hold a process id; removing the mark only, not the conversation"
@@ -159,12 +188,23 @@ fn list(dir: &Path) -> Option<Vec<String>> {
     }
 }
 
-/// 读文件开头一小段（记号只有一行十进制数）；读不了的当空的。
+/// 读文件开头一小段（记号是一行进程号、可能再加一行路径）；读不了的当空的。
 fn read_small(path: &Path) -> String {
     let mut text = String::new();
     std::fs::File::open(path)
-        .and_then(|file| file.take(64).read_to_string(&mut text))
+        .and_then(|file| file.take(MARK_LIMIT).read_to_string(&mut text))
         .map_or_else(|_| String::new(), |_| text)
+}
+
+/// 记号至多读多少字节：进程号一行加一个路径（至多 4096 字节）一行，留余量。
+const MARK_LIMIT: u64 = 8192;
+
+/// 记号第二行的 agy 家目录：头一行之后的那一行、以换行收尾（没写完的不算）、是绝对路径的才算；别的（没有、相对路径）是
+/// `None`，照扩展自己的 `HOME`。
+fn mark_home(content: &str) -> Option<PathBuf> {
+    let (_, rest) = content.split_once('\n')?;
+    let (line, _) = rest.split_once('\n')?;
+    Some(PathBuf::from(line)).filter(|path| path.is_absolute())
 }
 
 /// 进程 `pid` 还在不在：`ESRCH` 是不在了，别的结果（有权限的、没有权限的）都当还在。
@@ -234,10 +274,12 @@ fn dead_marks(marks: &[(String, String)], me: u32, alive: impl Fn(u32) -> bool) 
     marks
         .iter()
         .filter(|(name, _)| workspace::valid_conversation(name))
-        .filter_map(|(name, content)| match parse_pid(content.trim()) {
-            None => Some(Verdict::Unreadable(name.clone())),
-            Some(pid) if pid != me && !alive(pid) => Some(Verdict::Conversation(name.clone())),
-            Some(_) => None,
+        .filter_map(|(name, content)| {
+            match parse_pid(content.lines().next().unwrap_or("").trim()) {
+                None => Some(Verdict::Unreadable(name.clone())),
+                Some(pid) if pid != me && !alive(pid) => Some(Verdict::Conversation(name.clone())),
+                Some(_) => None,
+            }
         })
         .collect()
 }

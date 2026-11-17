@@ -15,6 +15,7 @@
 
 pub mod agent;
 pub mod agy;
+pub mod agy_home;
 pub mod brain;
 pub mod bridge;
 pub mod call;

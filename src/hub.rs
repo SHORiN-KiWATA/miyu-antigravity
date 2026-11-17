@@ -18,8 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
+use crate::agy_home::Reported;
 use crate::bridge::{self, Handler, Reply, Server, Tool};
 use crate::call::Signal;
 use crate::live::Route;
@@ -42,6 +43,8 @@ struct Entry {
     tools: Vec<Tool>,
     route: Route,
     stray: Arc<AtomicBool>,
+    /// 这个 agy 的 MCP 服务报来的家目录（设计第七、八节；和 [`Wiring`]、[`crate::live::Live`] 共用一份）。
+    reported: Arc<Reported>,
     next: AtomicU64,
 }
 
@@ -69,10 +72,12 @@ impl Hub {
         let token = bridge::new_token()?;
         let route = Route::default();
         let stray = Arc::new(AtomicBool::new(false));
+        let reported = Arc::new(Reported::default());
         let entry = Arc::new(Entry {
             tools,
             route: Arc::clone(&route),
             stray: Arc::clone(&stray),
+            reported: Arc::clone(&reported),
             next: AtomicU64::new(0),
         });
         self.lock().insert(token.clone(), entry);
@@ -82,6 +87,7 @@ impl Hub {
             socket: socket.to_path_buf(),
             route,
             stray,
+            reported,
         })
     }
 
@@ -103,6 +109,13 @@ impl Handler for Hub {
         self.entry(token).map(|entry| entry.tools.clone())
     }
 
+    /// 口令认识的才记：不认识的报来的家目录一概不理。
+    fn home(&self, token: &str, home: &Path) {
+        if let Some(entry) = self.entry(token) {
+            entry.reported.report(home);
+        }
+    }
+
     fn call(&self, token: &str, name: &str, arguments: Value, reply: Reply) {
         let Some(entry) = self.entry(token) else {
             if let Err(error) = reply.refuse("unknown token") {
@@ -110,6 +123,16 @@ impl Handler for Hub {
             }
             return;
         };
+        if entry.tools.is_empty() {
+            // 这段对话没带工具（口令只为报家目录登记）：agy 调的是全局配置里别的对话登记的工具，这里没有它。
+            let text = format!("Tool {name} is not available in this conversation.");
+            if let Err(error) = reply.send(&[json!({"type": "text", "text": text})], true) {
+                eprintln!(
+                    "answering a call to {name} on a conversation without tools failed: {error}"
+                );
+            }
+            return;
+        }
         let n = entry.next.fetch_add(1, Ordering::SeqCst) + 1;
         let call = McpCall {
             n,
@@ -138,6 +161,7 @@ pub struct Wiring {
     socket: PathBuf,
     route: Route,
     stray: Arc<AtomicBool>,
+    reported: Arc<Reported>,
 }
 
 impl std::fmt::Debug for Wiring {
@@ -171,6 +195,14 @@ impl Wiring {
     #[must_use]
     pub fn stray(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.stray)
+    }
+}
+
+impl Wiring {
+    /// agy 的 MCP 服务报来的家目录（和总台那一份是同一个；`Wiring` 丢掉以后 [`crate::live::Live`] 手里这一份还在）。
+    #[must_use]
+    pub fn reported(&self) -> Arc<Reported> {
+        Arc::clone(&self.reported)
     }
 }
 

@@ -4,6 +4,9 @@
 用法：fake_agy.py <怎么演> <agy 的参数…>。测试给每种演法写一个 sh 包装，`exec` 到这里（进程号不变）。
 环境：FAKE_RECORD 是记录目录（每个进程写一份 <pid>.json：参数、工作目录、HOME、标准输入的第一行 stdin、收到的每一行
 lines、子进程号），FAKE_SAMPLES 是真样本的目录。
+可选环境 FAKE_AGY_HOME=<目录>：像主人的包装脚本那样给 agy 换了家目录。有它时，假 agy 拉起的 MCP 服务（读 mcp_config.json 起的那个
+子进程）的 HOME 是它，假 agy 自己的会话文件（conversations/<编号>.db*）、转录（brain/<编号>/…）都写在它下面（记录里另有 agy_home）；
+mcp_config.json、代理文件照旧从原来的 HOME 读（真脚本里那是软链）。没有这个变量时行为和以前一样。
 
 照真 agy：一行标准输入是一轮，答完接着读下一行，第二轮起不再发 init；标准输入关了就退出。
 
@@ -30,7 +33,7 @@ lines、子进程号），FAKE_SAMPLES 是真样本的目录。
 带工具：启动时读 $HOME/.gemini/config/mcp_config.json，有 mcpServers.miyu 就照它的 command、args 起 MCP 服务（环境变量原样
 传下去，和假 agy 同一个进程组，所以 SIGTERM、SIGKILL 一起收），照真 agy 1.4.0 的握手顺序握手（tests/mcp/handshake.rs），把 tools/list
 的结果写到 $FAKE_RECORD/<pid>.tools（不叫 .json：records() 只认 .json 的记录）。读 MCP 服务的回话在单独的线程里，主线程等回话时
-照样能被信号杀掉。记录里另有 mcp_pid、bridge_env（环境里有哪几个桥的变量）、calls（发出的 tools/call）、replies（收到的回话）。
+照样能被信号杀掉。拉不拉 MCP 服务只看 mcp_config.json 里有没有 miyu 条目，和环境变量无关（照真 agy：启动时把登记着的每个服务都拉起来问 tools/list）。记录里另有 mcp_pid、bridge_env（环境里有哪几个桥的变量）、calls（发出的 tools/call）、replies（收到的回话）。
 
 剧本（PLANS）：名字 → 几个进程各自的演法（第几个起的进程用第几份，多了的用最后一份）→ 每一轮（标准输入的一行）的步子（一轮
 的步子演完发 result；多出来的轮用最后一份）。工具结果回来是同一轮接着演，不新开一轮。步子：
@@ -88,6 +91,7 @@ def option(name):
 AGENT = option("--agent")
 CONVERSATION = str(uuid.uuid4())
 HOME = os.environ["HOME"]
+AGY_HOME = os.environ.get("FAKE_AGY_HOME") or HOME  # 会话文件、转录写在这里；配置从 HOME 读
 record = {"argv": ARGS, "cwd": os.getcwd(), "home": HOME, "pid": os.getpid(), "conversation": CONVERSATION}
 
 
@@ -98,8 +102,10 @@ def save():
     os.rename(path + ".tmp", path)
 
 
+if AGY_HOME != HOME:
+    record["agy_home"] = AGY_HOME
 # agy 记下的这段对话：扩展收尾时要删掉。
-base = os.path.join(HOME, ".gemini", "antigravity-cli")
+base = os.path.join(AGY_HOME, ".gemini", "antigravity-cli")
 os.makedirs(os.path.join(base, "conversations"), exist_ok=True)
 for suffix in (".db", ".db-shm", ".db-wal"):
     with open(os.path.join(base, "conversations", CONVERSATION + suffix), "w") as file:
@@ -122,8 +128,11 @@ class Mcp:
     """假 agy 里的 MCP 客户端：起 MCP 服务、握手、tools/list、tools/call。"""
 
     def __init__(self, command, args):
+        env = os.environ.copy()
+        if AGY_HOME != HOME:
+            env["HOME"] = AGY_HOME  # 包装脚本给 agy 换了家目录：它拉起的 MCP 服务继承的就是这个
         self.proc = subprocess.Popen(
-            [command] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=os.environ.copy(), text=True, bufsize=1
+            [command] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env, text=True, bufsize=1
         )
         self.replies = {}
         self.cond = threading.Condition()

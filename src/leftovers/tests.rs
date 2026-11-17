@@ -202,3 +202,110 @@ fn sweeping_removes_what_a_dead_process_left_and_nothing_else() {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[test]
+fn a_mark_with_a_second_line_names_the_conversations_home() {
+    let marks = vec![
+        ("conv-a".to_string(), "300\n/fake/home\n".to_string()),
+        ("conv-b".to_string(), "200\n/fake/home\n".to_string()),
+    ];
+    assert_eq!(
+        dead_marks(&marks, ME, only_200),
+        [Verdict::Conversation("conv-a".to_string())],
+        "进程号照第一行认"
+    );
+    assert_eq!(
+        mark_home("300\n/fake/home\n"),
+        Some(PathBuf::from("/fake/home"))
+    );
+    assert_eq!(
+        mark_home("300\n/fake/home\nmore\n"),
+        Some(PathBuf::from("/fake/home"))
+    );
+}
+
+#[test]
+fn an_old_one_line_mark_or_a_second_line_that_is_not_absolute_has_no_home() {
+    for content in [
+        "300\n",
+        "300",
+        "",
+        "300\nrelative/dir\n",
+        "300\n\n",
+        "300\n/half/written",
+    ] {
+        assert_eq!(mark_home(content), None, "{content:?}");
+    }
+}
+
+#[test]
+fn marks_are_written_with_one_line_or_two_and_rewriting_keeps_the_pid() {
+    let state = scratch("mark-two");
+    let file = kept_dir(&state).join("abc-1");
+    mark(&state, "abc-1").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        format!("{}\n", std::process::id())
+    );
+    mark_with_home(&state, "abc-1", Some(Path::new("/fake/home"))).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        format!("{}\n/fake/home\n", std::process::id())
+    );
+    assert_eq!(
+        parse_pid(read_small(&file).lines().next().unwrap()),
+        Some(std::process::id())
+    );
+    mark_with_home(&state, "abc-1", None).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        format!("{}\n", std::process::id())
+    );
+    assert_eq!(
+        std::fs::read_dir(kept_dir(&state)).unwrap().count(),
+        1,
+        "没有临时文件"
+    );
+    std::fs::remove_dir_all(&state).unwrap();
+}
+
+#[test]
+fn sweeping_deletes_under_the_marked_home_when_there_is_one_and_the_own_home_otherwise() {
+    let (state, own, fake) = (scratch("hs-state"), scratch("hs-own"), scratch("hs-fake"));
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let dead = child.id();
+    child.wait().unwrap();
+    let plant = |home: &Path, id: &str| {
+        let base = home.join(".gemini/antigravity-cli");
+        std::fs::create_dir_all(base.join("conversations")).unwrap();
+        std::fs::create_dir_all(base.join("brain").join(id)).unwrap();
+        std::fs::write(base.join("conversations").join(format!("{id}.db")), "x").unwrap();
+    };
+    for (home, id) in [
+        (&fake, "two-1"),
+        (&own, "one-1"),
+        (&own, "rel-1"),
+        (&fake, "rel-1"),
+    ] {
+        plant(home, id);
+    }
+    std::fs::create_dir_all(kept_dir(&state)).unwrap();
+    let write =
+        |id: &str, content: String| std::fs::write(kept_dir(&state).join(id), content).unwrap();
+    write("two-1", format!("{dead}\n{}\n", fake.display()));
+    write("one-1", format!("{dead}\n"));
+    write("rel-1", format!("{dead}\nrelative\n"));
+
+    sweep(&state, None, Some(&own));
+
+    let exists =
+        |home: &Path, id: &str| home.join(".gemini/antigravity-cli/brain").join(id).exists();
+    assert!(!exists(&fake, "two-1"), "第二行的家目录下删了");
+    assert!(!exists(&own, "one-1"), "一行的老记号照自己的家目录");
+    assert!(!exists(&own, "rel-1"), "第二行不是绝对路径的照自己的家目录");
+    assert!(exists(&fake, "rel-1"), "不是绝对路径的那行不当路径用");
+    assert_eq!(list(&kept_dir(&state)).unwrap().len(), 0, "记号都删了");
+    for dir in [state, own, fake] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

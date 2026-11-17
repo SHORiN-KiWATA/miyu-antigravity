@@ -232,10 +232,15 @@ fn with_sent(mut answer: Value, input: &str) -> Value {
     answer
 }
 
-/// 请求带工具的：登记总台、把 MCP 条目写进 agy 的配置。出了错的交回答（`unclassified`，原话说明怎么办）；不带工具的交 `None`。
+/// 请求带工具的：登记总台、把 MCP 条目写进 agy 的配置。出了错的交回答（`unclassified`，原话说明怎么办）。
+///
+/// 不带工具的：照样登记总台（工具表是空的），好让环境变量放进 agy 的环境——agy 启动时会把 `mcp_config.json` 里登记着的每个服务都
+/// 拉起来问 `tools/list`（以前哪次带工具的调用登记过 `miyu` 就一直在），那个工具服务来 `list`（回空表）时顺带把 agy 的 `HOME` 报上来
+/// （[`crate::agy_home`]）；但**不写、不建** `mcp_config.json`，文件里本来没有 `miyu` 条目的，agy 不拉工具服务，照旧用扩展自己的
+/// `HOME`。套接字起不来（路径太长之类）的照常跑，只是没有环境变量，交 `None`。
 fn wire(job: &Job<'_>, home: &Path) -> Result<Option<Wiring>, Value> {
     if job.declared.is_empty() {
-        return Ok(None);
+        return Ok(job.tools.wire(Vec::new()).ok());
     }
     let wiring = job
         .tools

@@ -366,3 +366,33 @@ fn the_socket_directory_prefers_runtime_over_state() {
     );
     assert_eq!(socket_path_in(None, os(""), 7), None);
 }
+
+#[test]
+fn only_a_non_empty_absolute_utf8_home_is_reported() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let some = |text: &str| Some(OsString::from(text));
+    assert_eq!(home_from(some("/home/a")), Some(PathBuf::from("/home/a")));
+    for odd in [None, some(""), some("relative"), some("~")] {
+        assert_eq!(home_from(odd.clone()), None, "{odd:?}");
+    }
+    assert_eq!(
+        home_from(Some(OsString::from_vec(b"/h\xff".to_vec()))),
+        None
+    );
+}
+
+#[test]
+fn the_home_goes_into_the_request_only_when_there_is_one() {
+    let with = with_home(list_request("t"), Some(Path::new("/h")));
+    assert_eq!(with, json!({"token": "t", "op": "list", "home": "/h"}));
+    assert_eq!(home_of(&with), Some(PathBuf::from("/h")));
+    let call = with_home(
+        call_request("t", "bash", &json!({"a": 1})),
+        Some(Path::new("/h")),
+    );
+    assert_eq!(call["home"], "/h");
+    assert_eq!(call["arguments"], json!({"a": 1}));
+    assert_eq!(with_home(list_request("t"), None), list_request("t"));
+    assert_eq!(home_of(&list_request("t")), None);
+}

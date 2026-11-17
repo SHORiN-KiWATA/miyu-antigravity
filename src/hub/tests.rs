@@ -181,3 +181,69 @@ fn dropping_the_wiring_takes_the_token_out() {
     assert!(rig.hub.is_empty());
     assert_eq!(rig.hub.list(&token), None);
 }
+
+/// 直接往套接字写一行原文、读回一行。
+fn raw(socket: &Path, line: &str) -> Value {
+    use std::io::{BufRead, BufReader, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();
+    writeln!(stream, "{line}").unwrap();
+    let mut reply = String::new();
+    BufReader::new(stream).read_line(&mut reply).unwrap();
+    serde_json::from_str(&reply).unwrap()
+}
+
+#[test]
+fn an_old_tool_server_without_a_home_still_gets_the_table_and_reports_nothing() {
+    let rig = Rig::new("nohome");
+    let wiring = rig.register();
+    let line = json!({"token": wiring.token(), "op": "list"}).to_string();
+    assert_eq!(raw(&rig.socket(), &line)["tools"][0]["name"], "bash");
+    assert_eq!(wiring.reported().get(), None);
+}
+
+#[test]
+fn a_reported_home_is_kept_per_token_from_list_and_call_and_odd_ones_are_ignored() {
+    let rig = Rig::new("home");
+    let (one, two) = (rig.register(), rig.register());
+    let line = json!({"token": one.token(), "op": "list", "home": "/fake/one"}).to_string();
+    assert_eq!(raw(&rig.socket(), &line)["tools"][0]["name"], "bash");
+    assert_eq!(one.reported().get(), Some(PathBuf::from("/fake/one")));
+    assert_eq!(two.reported().get(), None, "别的口令不受影响");
+
+    // `call` 也能报；不合格的（相对路径、不是字、空的）当没带、不改已经记着的。
+    let receiver = listen(&one);
+    for odd in [json!("rel"), json!(3), json!("")] {
+        let line = json!({"token": one.token(), "op": "list", "home": odd}).to_string();
+        assert_eq!(raw(&rig.socket(), &line)["tools"][0]["name"], "bash");
+    }
+    assert_eq!(one.reported().get(), Some(PathBuf::from("/fake/one")));
+    let socket = rig.socket();
+    let line = json!({"token": two.token(), "op": "call", "name": "bash", "arguments": {}, "home": "/fake/two"}).to_string();
+    let listening = listen(&two);
+    let asked = std::thread::spawn(move || raw(&socket, &line));
+    let call = next_call(&listening);
+    assert_eq!(two.reported().get(), Some(PathBuf::from("/fake/two")));
+    call.reply.send(&[], false).unwrap();
+    assert_eq!(asked.join().unwrap()["isError"], false);
+    drop(receiver);
+}
+
+#[test]
+fn a_home_reported_with_an_unknown_token_is_dropped() {
+    let rig = Rig::new("homeunknown");
+    let wiring = rig.register();
+    let line = json!({"token": "nope", "op": "list", "home": "/evil"}).to_string();
+    assert!(raw(&rig.socket(), &line).get("error").is_some());
+    assert_eq!(wiring.reported().get(), None);
+}
+
+#[test]
+fn the_reported_cell_outlives_the_wiring() {
+    let rig = Rig::new("outlive");
+    let wiring = rig.register();
+    let line = json!({"token": wiring.token(), "op": "list", "home": "/fake/h"}).to_string();
+    raw(&rig.socket(), &line);
+    let cell = wiring.reported();
+    drop(wiring);
+    assert_eq!(cell.get(), Some(PathBuf::from("/fake/h")));
+}

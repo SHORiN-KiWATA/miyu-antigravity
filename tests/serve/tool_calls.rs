@@ -235,15 +235,18 @@ fn the_mcp_config_keeps_other_servers_and_the_tool_list_is_shaped() {
     assert_eq!(listed["tools"][1]["name"], "read");
 }
 
-/// 请求不带工具：不建 `mcp_config.json`，agy 的环境里没有那两个变量。
+/// 请求不带工具：不建 `mcp_config.json`；agy 的环境里有那两个变量（总台照样接上、工具表是空的，好让工具服务报家目录）。
 #[test]
-fn a_request_without_tools_makes_no_mcp_config_and_leaves_the_variables_out() {
+fn a_request_without_tools_makes_no_mcp_config_but_still_gives_agy_the_variables() {
     let mut core = Core::start("t-none", "echo");
     core.call("r1", "d1", &request("s", "hello there"));
     assert_eq!(core.collect("r1", "d1").text(), "echo: hello there");
     assert!(!core.home.join(".gemini/config/mcp_config.json").exists());
     let record = &core.records()[0];
-    assert_eq!(record["bridge_env"], json!([]));
+    assert_eq!(
+        record["bridge_env"],
+        json!(["MIYU_ANTIGRAVITY_BRIDGE", "MIYU_ANTIGRAVITY_TOKEN"])
+    );
     assert!(record.get("mcp_pid").is_none());
     assert_eq!(sockets(&core), 1, "套接字服务端照常起着");
 }

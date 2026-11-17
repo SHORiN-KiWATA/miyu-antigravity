@@ -25,6 +25,11 @@ pub struct Agy {
 impl Agy {
     /// 起 `mcp`；`bridge` 是 `Some((套接字路径, 口令))` 就设上两个环境变量，`None` 一个都不设。
     pub fn start(bridge: Option<(&Path, &str)>) -> Agy {
+        Agy::start_with_home(bridge, None)
+    }
+
+    /// 同 [`Agy::start`]；`home` 是 `Some` 的把环境变量 `HOME` 设成它（可以是空的、相对的），`None` 照测试进程自己的。
+    pub fn start_with_home(bridge: Option<(&Path, &str)>, home: Option<&str>) -> Agy {
         let mut command = Command::new(env!("CARGO_BIN_EXE_miyu-antigravity"));
         command
             .arg("mcp")
@@ -33,6 +38,9 @@ impl Agy {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        if let Some(home) = home {
+            command.env("HOME", home);
+        }
         if let Some((path, token)) = bridge {
             command
                 .env(bridge::ENV_BRIDGE, path)
@@ -141,9 +149,17 @@ pub struct Call {
 pub struct Extension {
     pub tools: Vec<Tool>,
     pub calls: Mutex<Sender<Call>>,
+    /// 请求里报来的家目录（每次一条）。
+    pub homes: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 impl Handler for Extension {
+    fn home(&self, token: &str, home: &Path) {
+        if token == TOKEN {
+            self.homes.lock().unwrap().push(home.to_path_buf());
+        }
+    }
+
     fn list(&self, token: &str) -> Option<Vec<Tool>> {
         (token == TOKEN).then(|| self.tools.clone())
     }
@@ -168,6 +184,8 @@ pub struct Rig {
     pub calls: Receiver<Call>,
     pub dir: PathBuf,
     pub path: PathBuf,
+    /// 扩展收到的 `home`（照先后）。
+    pub homes: Arc<Mutex<Vec<PathBuf>>>,
 }
 
 pub fn tool(name: &str) -> Tool {
@@ -185,9 +203,11 @@ impl Rig {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.sock");
         let (sender, calls) = channel();
+        let homes = Arc::new(Mutex::new(Vec::new()));
         let handler = Arc::new(Extension {
             tools: vec![tool("bash"), tool("read")],
             calls: Mutex::new(sender),
+            homes: Arc::clone(&homes),
         });
         let server = Server::start(&path, handler).unwrap();
         Rig {
@@ -195,7 +215,13 @@ impl Rig {
             calls,
             dir,
             path,
+            homes,
         }
+    }
+
+    /// 同 [`Rig::agy`]，`mcp` 的 `HOME` 是 `home`。
+    pub fn agy_with_home(&self, home: &str) -> Agy {
+        Agy::start_with_home(Some((&self.path, TOKEN)), Some(home))
     }
 
     /// 起一个带着这个套接字和口令的 `mcp`。

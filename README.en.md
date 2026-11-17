@@ -23,35 +23,44 @@ miyu pkg install antigravity
 
 Installing asks you to approve two capabilities: providing a model driver, and network access (agy talks to Google's services).
 
-Then add a provider to `~/.miyu/etc/config.toml` by hand (an extension cannot edit the configuration):
+Then add a provider that uses this driver (an extension cannot change provider settings itself, so this step is yours). Pick
+any id; `agy` is used below:
 
-```toml
-[providers.agy]
-name = "Antigravity"
-driver = "antigravity/antigravity"
-local = true            # the calls use your agy subscription: with this Miyu counts them as 0, without it Miyu prices them from its model catalog
-
-# Model names are the first column of `agy models`; the tier (low, medium, high, xhigh) is part of the name.
-[providers.agy.models."gemini-4-hydrogen-high"]
-window = 1000000        # agy does not report the window; write the model's real one, or Miyu will not compact ahead of time
-effort = "high"         # write it for high tiers: Miyu then waits longer for the first token, see "Good to know"
-
-[models]
-chat = "agy/gemini-3.8-flash-low"
+```bash
+miyu config set providers.agy.driver antigravity/antigravity
+miyu config set providers.agy.name Antigravity        # the name shown in the interface; optional
 ```
 
-No prices are needed, but do write `local = true`: Miyu knows model names such as `gemini-…` and `claude-…`, and without it
-every turn is priced from the model catalog (what you actually spend is your agy subscription).
+After that `/model` in a conversation lists its models (such as `agy/gemini-3.8-flash-low`): the list comes from `agy models`,
+and the tier (low, medium, high, xhigh) is part of the model name. The terminal interface can do the same without commands:
+`/config`, "Providers and models", press `a`, "Custom…", enter `agy` as the ID, switch "Interface" to
+`antigravity/antigravity`, leave the address and the key empty, and save.
+
+To give a model its own context window or reasoning effort, add a model entry to `~/.miyu/etc/config.toml`:
+
+```toml
+[providers.agy.models."gemini-4-hydrogen-high"]
+window = 1000000        # agy does not report the window; write the model's real one if it matters
+effort = "high"         # write it for high tiers: Miyu then waits longer for the first token, see "Good to know"
+```
+
+Amounts: Miyu knows model names such as `gemini-…` and `claude-…` and shows an amount for every turn at the API price from its
+model catalog; what you actually spend is your agy subscription. To have it counted as 0, run
+`miyu config set providers.agy.local true`.
 
 Settings, on the "Packages" page of the settings:
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `antigravity.binary` | empty | Full path of agy. Empty: look for it on `PATH` |
-| `antigravity.keep_seconds` | 600 | How long an idle agy process is kept for the next turn of its conversation |
-| `antigravity.tool_wait_seconds` | 3600 | How long agy waits for a tool call it handed back to Miyu, including the time you take to confirm |
+| Setting | Key | Default | Meaning |
+|---|---|---|---|
+| Executable path | `antigravity.binary` | empty | Full path of agy (or of a wrapper script around it); a leading `~` is your home folder. Empty: look for `agy` on `PATH` |
+| Process retention after a turn (seconds) | `antigravity.keep_seconds` | 600 | After a turn ends, how long its agy process is kept for the next turn of the same conversation. 0: not kept |
+| Tool call timeout (seconds) | `antigravity.tool_wait_seconds` | 3600 | How long agy waits for a tool call it handed back to Miyu, including the time you take to confirm |
 
 Which account is used is not this package's business: agy runs with Miyu's `HOME` and uses the login under `~/.gemini`.
+"Executable path" may also point to your own wrapper script around agy (one that spreads work over several accounts, say): it has
+to pass the arguments, standard input and standard output through unchanged. A wrapper that gives agy another `HOME` works too,
+as long as `.gemini/config` under that home is the same folder as the real one (a symlink): the system prompt and the tool server
+are written there. Wherever agy keeps its conversation files, this package follows it to read and remove them.
 
 ## What it writes into agy's configuration
 
