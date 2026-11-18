@@ -68,13 +68,15 @@ agy takes its system prompt and tools only from its own configuration files, so 
 - The entry named `miyu` in `mcp_config.json`: how agy finds this package's tool server. Only this entry is changed; servers
   you configured yourself stay as they are. If the file cannot be understood it is not overwritten, and that call fails.
 
-When you run agy yourself you will see the `miyu-…` agents and the `miyu` MCP server; in an agy that Miyu did not start, the
-server offers an empty tool list.
+When you run agy yourself you will see the `miyu-…` agents; while the Miyu core is running and has used this package you
+will also see the `miyu` MCP server, which offers an empty tool list in an agy that Miyu did not start. When the extension
+stops normally (the core stops, or the package is disabled or removed) it takes the `miyu` entry out again.
 
 The conversation files agy keeps for each conversation (`conversations/` and `brain/` under `~/.gemini/antigravity-cli/`)
 are deleted when the conversation is dropped.
 
-Before uninstalling, clean those two places:
+Before uninstalling, clean those two places (the `miyu` entry is already gone after a normal stop; the agent folders, and
+what is left when the extension was killed, need this step):
 
 ```bash
 miyu antigravity unregister

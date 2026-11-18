@@ -269,6 +269,48 @@ fn a_broken_mcp_config_fails_the_call_and_is_left_alone() {
     assert_eq!(core.work_dirs_left(), 0);
 }
 
+/// 扩展正常退出（核心关它的标准输入：停核心、关掉或卸掉这个包）：自己登记的 `miyu` 一条拿掉，别的服务原样。卸了包以后
+/// agy 的配置里不留一条指着已经删掉的程序的服务（审计 #163）。
+#[test]
+fn the_miyu_entry_is_removed_when_the_extension_stops() {
+    let mut core = Core::start("t-release", "plan:one");
+    let file = core.home.join(".gemini/config/mcp_config.json");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let other = json!({"command": "/usr/bin/other", "args": ["--x"]});
+    std::fs::write(
+        &file,
+        serde_json::to_string_pretty(&json!({"theme": "dark", "mcpServers": {"other": other}}))
+            .unwrap(),
+    )
+    .unwrap();
+    core.call("r1", "d1", &tool_request("s", "go"));
+    core.collect("r1", "d1");
+    let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(config["mcpServers"]["miyu"].is_object(), "跑着的时候在");
+
+    assert!(core.finish().success());
+    let config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert!(config["mcpServers"].get("miyu").is_none(), "{config}");
+    assert_eq!(config["mcpServers"]["other"], other, "别的服务原样在");
+    assert_eq!(config["theme"], "dark");
+}
+
+/// 退出时那一条已经不是指着本程序的了（另一处装的 Miyu 登记的）：不动它。
+#[test]
+fn an_entry_that_points_at_another_program_is_left_when_the_extension_stops() {
+    let mut core = Core::start("t-release-other", "plan:one");
+    let file = core.home.join(".gemini/config/mcp_config.json");
+    core.call("r1", "d1", &tool_request("s", "go"));
+    core.collect("r1", "d1");
+    let mut config: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    config["mcpServers"]["miyu"]["command"] = json!("/somewhere/else/miyu-antigravity");
+    let text = serde_json::to_string_pretty(&config).unwrap();
+    std::fs::write(&file, &text).unwrap();
+
+    assert!(core.finish().success());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), text, "一个字没动");
+}
+
 /// 文件是 0 字节的（agy 头一次运行自己建的就是这样）：照常登记、照常调用。
 #[test]
 fn an_empty_mcp_config_is_filled_in_and_the_call_goes_through() {

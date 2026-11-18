@@ -3,7 +3,7 @@
 //! 都不丢，键的先后照旧（`serde_json` 开着 `preserve_order`）。
 //!
 //! 那一条写成 `{"command": <程序>, "args": ["mcp"], "timeoutSeconds": N, "tools": {<名>: {"eager": true}, ..}}`：`tools` 是
-//! 这条里原有的工具名并上这次要登记的（名单只增不减：别的 agy 进程可能还在用旧名单）；**不写 `env`**（口令、套接字地址由
+//! 这条里原有的工具名并上这次要登记的（名单只增不减：别的 agy 进程可能还在用旧名单；扩展正常退出时整条拿掉，名单跟着清零）；**不写 `env`**（口令、套接字地址由
 //! agy 的环境变量传下来，设计第三节），旧版 Miyu 留下的同名条目连它的 `env` 一起被接管改写。
 //!
 //! 纯的部分（[`register_text`]、[`unregister_text`]：旧文本进、新文本或「不变」出）和读写文件（[`register`]、[`unregister`]）
@@ -12,6 +12,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Map, Value, json};
@@ -34,6 +35,9 @@ pub struct Registration {
 
 /// 同一个进程里几个调用同时改同一份文件时排队。
 static LOCK: Mutex<()> = Mutex::new(());
+
+/// 这个进程登记成过没有（[`register`] 成了就记下）：退出时只有登记过的才去收（[`registered`]）。
+static REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /// `home` 下 agy 的 MCP 登记文件。
 #[must_use]
@@ -90,6 +94,29 @@ pub fn unregister_text(old: Option<&str>) -> Result<Option<String>, String> {
     Ok(rendered(&before, &after))
 }
 
+/// 在 `old` 上拿掉 `miyu` 一条，**只在它的 `command` 正好是 `program` 时**：交新文本；条目没有、指着别的程序（另一处装的 Miyu
+/// 登记的）的交 `None`。扩展退出时用（[`unregister_own`]）。
+///
+/// # Errors
+///
+/// 同 [`register_text`]。
+pub fn unregister_own_text(old: Option<&str>, program: &Path) -> Result<Option<String>, String> {
+    let before = parse(old)?;
+    let mut after = before.clone();
+    if after.get("mcpServers").is_some() {
+        let servers = servers_of(&mut after)?;
+        let ours = servers
+            .get(SERVER)
+            .and_then(|entry| entry.get("command"))
+            .and_then(Value::as_str)
+            .is_some_and(|command| Path::new(command) == program);
+        if ours {
+            servers.shift_remove(SERVER);
+        }
+    }
+    Ok(rendered(&before, &after))
+}
+
 /// 读成 JSON 对象；文件不存在、文件是空的（只有空白也算）都是空对象：agy 头一次运行会自己建一份 0 字节的
 /// `mcp_config.json`（agy 1.4.0 真机见过），没配过 MCP 的人手里就是这样一份，里面没有要保住的东西。
 fn parse(old: Option<&str>) -> Result<Value, String> {
@@ -130,7 +157,9 @@ fn rendered(before: &Value, after: &Value) -> Option<String> {
 ///
 /// 文件读不出来、读不懂（不是 JSON 对象、`mcpServers` 不是对象；**不覆盖**，错里有路径）、写不进去：原样交。
 pub fn register(file: &Path, registration: &Registration) -> std::io::Result<bool> {
-    update(file, |old| register_text(old, registration))
+    let wrote = update(file, |old| register_text(old, registration))?;
+    REGISTERED.store(true, Ordering::SeqCst);
+    Ok(wrote)
 }
 
 /// 把 `file` 里的 `miyu` 一条拿掉：文件不存在、条目本来就没有算没写。交的是有没有写。
@@ -140,6 +169,23 @@ pub fn register(file: &Path, registration: &Registration) -> std::io::Result<boo
 /// 同 [`register`]。
 pub fn unregister(file: &Path) -> std::io::Result<bool> {
     update(file, unregister_text)
+}
+
+/// 扩展退出时把自己登记的那一条收掉：`file` 里的 `miyu` 一条还指着 `program`（本程序）的才拿掉，别的不动。交的是有没有写。
+/// 这样卸了包以后 agy 的配置里不留一条指着已经删掉的程序的服务，工具名单也不会一直攒下去；被硬杀的来不及收，留给
+/// `miyu antigravity unregister` 或者下一次正常退出。
+///
+/// # Errors
+///
+/// 同 [`register`]。
+pub fn unregister_own(file: &Path, program: &Path) -> std::io::Result<bool> {
+    update(file, |old| unregister_own_text(old, program))
+}
+
+/// 这个进程登记成过没有。
+#[must_use]
+pub fn registered() -> bool {
+    REGISTERED.load(Ordering::SeqCst)
 }
 
 /// 加锁读 `file`，交给 `change` 算新文本，有变化才写。

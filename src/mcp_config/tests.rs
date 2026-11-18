@@ -262,3 +262,40 @@ fn an_empty_file_counts_as_no_servers() {
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// 退出时收自己那一条：`command` 正好是本程序的才拿掉；指着别的程序的、没有这一条的、文件不存在的都不写。
+#[test]
+fn unregister_own_removes_the_entry_only_when_it_points_at_this_program() {
+    let dir = scratch("own");
+    let file = dir.join("mcp_config.json");
+    std::fs::write(
+        &file,
+        r#"{"theme": "dark", "mcpServers": {"other": {"command": "/usr/bin/other"}}}"#,
+    )
+    .unwrap();
+    let ours = entry(&["a", "b"]);
+    assert!(register(&file, &ours).unwrap());
+    assert!(registered(), "登记成过");
+
+    let elsewhere = Path::new("/somewhere/else/miyu-antigravity");
+    assert!(!unregister_own(&file, elsewhere).unwrap(), "不是指着它的");
+    assert!(read(&file)["mcpServers"]["miyu"].is_object());
+
+    assert!(unregister_own(&file, &ours.program).unwrap());
+    let config = read(&file);
+    assert!(config["mcpServers"].get("miyu").is_none(), "{config}");
+    assert_eq!(config["mcpServers"]["other"]["command"], "/usr/bin/other");
+    assert_eq!(config["theme"], "dark");
+    assert!(!unregister_own(&file, &ours.program).unwrap(), "已经没有了");
+
+    let missing = dir.join("none.json");
+    assert!(!unregister_own(&missing, &ours.program).unwrap());
+    assert!(!missing.exists(), "不建文件");
+    // 再登记一次，名单从头来（上一份已经整条拿掉了）。
+    assert!(register(&file, &entry(&["c"])).unwrap());
+    assert_eq!(
+        read(&file)["mcpServers"]["miyu"]["tools"],
+        json!({"c": {"eager": true}})
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

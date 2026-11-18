@@ -43,6 +43,7 @@ pub(super) fn resume(
         }
     };
     touch(job, &agent);
+    agy::warn_long(job.call, &texts);
     let input = agy::stdin_texts(&texts);
     let mut turn = Turn::new(&agent);
     let ended = talk(

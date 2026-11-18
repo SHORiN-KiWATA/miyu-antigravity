@@ -334,6 +334,7 @@ fn fresh(job: &Job<'_>, whole: &str, incoming: Option<Incoming>) -> Value {
             return turn::failed(Class::Unclassified, &spawn_failure(job.config, &error));
         }
     };
+    agy::warn_long(job.call, &[whole]);
     let input = agy::stdin_line(whole);
     let mut turn = Turn::new(&agent);
     let ended = talk(

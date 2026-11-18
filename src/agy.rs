@@ -51,6 +51,26 @@ pub fn command(
     command
 }
 
+/// agy 一条输入至多收多少字节的字：超过的从尾部悄悄截掉、照样报成功。算在解出来的字上，不是算在标准输入那一行的字节上
+/// （2026-11-18 真机：字 200 KB 的尾部没了；字 170 KB、全是引号换行、那一行 297 KB 的首尾都在）。
+pub const TEXT_LIMIT: usize = 192_000;
+
+/// 这几段字加起来超过 [`TEXT_LIMIT`] 的，交一共多少字节（好记一行日志）；没超的是 `None`。
+#[must_use]
+pub fn over_limit(texts: &[impl AsRef<str>]) -> Option<usize> {
+    let total: usize = texts.iter().map(|text| text.as_ref().len()).sum();
+    (total > TEXT_LIMIT).then_some(total)
+}
+
+/// 记一行日志：这一次（编号 `call`）发给 agy 的字超过了它收的上限，尾部会被它截掉。没超的不记。
+pub fn warn_long(call: &str, texts: &[impl AsRef<str>]) {
+    if let Some(total) = over_limit(texts) {
+        eprintln!(
+            "call {call}: this turn's input is {total} bytes; agy silently cuts input over {TEXT_LIMIT} bytes at the tail"
+        );
+    }
+}
+
 /// 写进标准输入的一行：一轮人说的话 `text`，带换行。
 #[must_use]
 pub fn stdin_line(text: &str) -> String {

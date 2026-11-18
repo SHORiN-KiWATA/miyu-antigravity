@@ -140,7 +140,28 @@ pub fn serve(input: impl BufRead, out: &Out) -> ExitCode {
         }
     };
     server.shut_down();
+    release_registration();
     code
+}
+
+/// 正常退出（核心关了标准输入：停核心、关掉或卸掉这个包）时，把这个进程登记进 agy 配置的 `miyu` 一条收掉
+/// （[`crate::mcp_config::unregister_own`]）：agy 都已经收掉了，下次带工具的调用会再登记。没登记过的不碰那份文件；出的错只记日志。
+fn release_registration() {
+    if !crate::mcp_config::registered() {
+        return;
+    }
+    let (Some(home), Ok(program)) = (workspace::home(), std::env::current_exe()) else {
+        return;
+    };
+    let file = crate::mcp_config::path(&home);
+    match crate::mcp_config::unregister_own(&file, &program) {
+        Ok(true) => eprintln!(
+            "stopping: removed the \"miyu\" entry from {}",
+            file.display()
+        ),
+        Ok(false) => {}
+        Err(error) => eprintln!("stopping: could not remove the \"miyu\" entry: {error}"),
+    }
 }
 
 /// 清上一个被硬杀的扩展进程留下的东西（[`leftovers`]）：读完配置以后、起套接字服务端之前做一次；出的错只记日志。

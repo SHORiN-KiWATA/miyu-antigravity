@@ -71,3 +71,19 @@ fn command_uses_the_configured_program_and_leaves_home_alone() {
     assert_eq!(set.get_args().collect::<Vec<_>>(), ["models"]);
     assert_eq!(set.get_envs().count(), 0);
 }
+
+/// 上限算在字上（几段加起来）：正好 192,000 字节的不算超，多一个字节的交总数。
+#[test]
+fn over_limit_counts_the_bytes_of_the_texts_together() {
+    assert_eq!(TEXT_LIMIT, 192_000);
+    let at = "a".repeat(TEXT_LIMIT);
+    assert_eq!(over_limit(&[at.as_str()]), None);
+    assert_eq!(over_limit(&[at.as_str(), "b"]), Some(TEXT_LIMIT + 1));
+    // 全是要转义的字：写进标准输入的那一行比上限长得多，字本身没超的不算超。
+    let quotes = "\"q\"\n".repeat(42_000);
+    assert!(stdin_line(&quotes).len() > TEXT_LIMIT);
+    assert_eq!(over_limit(&[quotes.as_str()]), None);
+    assert_eq!(over_limit(&["汉".repeat(64_001).as_str()]), Some(192_003));
+    let nothing: [&str; 0] = [];
+    assert_eq!(over_limit(&nothing), None);
+}
