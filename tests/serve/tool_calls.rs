@@ -273,7 +273,7 @@ fn a_broken_mcp_config_fails_the_call_and_is_left_alone() {
 /// agy 的配置里不留一条指着已经删掉的程序的服务（审计 #163）。
 #[test]
 fn the_miyu_entry_is_removed_when_the_extension_stops() {
-    let mut core = Core::start("t-release", "plan:one");
+    let mut core = Core::start("t-rel", "plan:one");
     let file = core.home.join(".gemini/config/mcp_config.json");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let other = json!({"command": "/usr/bin/other", "args": ["--x"]});
@@ -298,7 +298,7 @@ fn the_miyu_entry_is_removed_when_the_extension_stops() {
 /// 退出时那一条已经不是指着本程序的了（另一处装的 Miyu 登记的）：不动它。
 #[test]
 fn an_entry_that_points_at_another_program_is_left_when_the_extension_stops() {
-    let mut core = Core::start("t-release-other", "plan:one");
+    let mut core = Core::start("t-rel-o", "plan:one");
     let file = core.home.join(".gemini/config/mcp_config.json");
     core.call("r1", "d1", &tool_request("s", "go"));
     core.collect("r1", "d1");
