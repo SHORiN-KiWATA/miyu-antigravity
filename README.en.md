@@ -92,8 +92,9 @@ miyu pkg remove antigravity
 - **Web search is done by agy.** Miyu only shows what was searched and what came back. Reading web pages goes through Miyu's
   own tool.
 - **agy does not stream its thinking**, so nothing arrives while it thinks. Measured on the highest tier (xhigh), a hard
-  question took a minute and a half until the first token; Miyu treats 180 seconds of silence as a timeout and retries.
-  Write the matching `effort` in the model entry of high tiers and the limit grows (twice for high, three times for xhigh).
+  question took a minute and a half until the first token, and some models wait a minute or two on every step. Miyu
+  treats 180 seconds of silence as a timeout and retries; this package widens that to 300 seconds. Write the matching
+  `effort` in the model entry of high tiers and the limit grows further (twice for high, three times for xhigh).
 - **agy adds about 3,400 tokens of its own to every request**, counted against your agy quota.
 - **Images**: agy takes text only, so images are described by the vision model configured in Miyu first.
 - **How turns connect**: the next turn of a conversation goes to the agy process that is still alive, and only the new
