@@ -6,7 +6,7 @@ version = "0.1.2"
 protocol = [1, 1]
 miyu = "2026.11.0-rc.2.4"
 name = { en = "Antigravity", zh = "Antigravity" }
-summary = { en = "Use the local Antigravity CLI (agy) as a model provider", zh = "把本机的 Antigravity CLI（agy）当模型供应商" }
+summary = { en = "Use the local Antigravity CLI (agy) as a model provider", zh = "把本机的 Antigravity CLI（agy）用作模型供应商" }
 author = "SHORiN-KiWATA"
 upstream = "https://github.com/SHORiN-KiWATA/miyu-antigravity"
 license = "AGPL-3.0-or-later"
@@ -18,7 +18,7 @@ targets = ["linux-x86_64", "linux-aarch64", "macos-aarch64"]
 [command]
 name = "antigravity"
 program = "miyu-antigravity"
-about = { en = "Antigravity CLI as a model provider (started by the Miyu core)", zh = "把 Antigravity CLI 当模型供应商（由 Miyu 核心拉起）" }
+about = { en = "Antigravity CLI as a model provider (started by the Miyu core)", zh = "把 Antigravity CLI 用作模型供应商（由 Miyu 核心启动）" }
 
 [process]
 args = ["serve"]
@@ -49,7 +49,7 @@ max = 1024
 # 不写默认值：没填就是在 PATH 里找 agy（清单里文字的默认值不能是空的）。
 applies = "now"
 name = { en = "Executable path", zh = "可执行文件路径" }
-description = { en = "Full path of the Antigravity CLI (agy) or of a wrapper script around it; a leading ~ is your home folder. Empty: look for agy on PATH.", zh = "Antigravity CLI（agy）或包着它的脚本的完整路径，开头的 ~ 是家目录。空着：在 PATH 里找 agy。" }
+description = { en = "Full path of the Antigravity CLI (agy) or of a wrapper script around it; a leading ~ is your home folder. Empty: look for agy on PATH.", zh = "Antigravity CLI（agy）的完整路径，也可以填写包装它的脚本；开头的 ~ 表示家目录。没有填写时在 PATH 里查找 agy。" }
 
 [settings.keep_seconds]
 type = "int"
@@ -58,7 +58,7 @@ max = 86400
 default = 600
 applies = "now"
 name = { en = "Process retention after a turn (seconds)", zh = "对话结束后进程保留时长（秒）" }
-description = { en = "After a turn ends, how long its agy process is kept for the next turn of the same conversation before it is stopped. 0: do not keep it.", zh = "一轮对话说完以后，agy 进程留着等同一段对话的下一轮多久，到点收掉。0：不保留。" }
+description = { en = "After a turn ends, how long its agy process is kept for the next turn of the same conversation before it is stopped. 0: do not keep it.", zh = "一轮对话结束后，agy 进程保留多久，用来等待同一段对话的下一轮；超过这个时间就结束进程。填 0 表示不保留。" }
 
 [settings.tool_wait_seconds]
 type = "int"
@@ -67,4 +67,4 @@ max = 86400
 default = 3600
 applies = "now"
 name = { en = "Tool call timeout (seconds)", zh = "工具调用超时时长（秒）" }
-description = { en = "How long a tool call handed back to Miyu may take, including time spent waiting for the person to confirm, before agy gives up on it.", zh = "agy 把一次工具调用交回 Miyu 后最多等多久，核心执行工具、等人点确认的时间都算在里面。" }
+description = { en = "How long a tool call handed back to Miyu may take, including time spent waiting for the person to confirm, before agy gives up on it.", zh = "agy 把一次工具调用交给 Miyu 之后最多等待多久。核心执行工具的时间和等待你确认的时间都计算在内。" }
