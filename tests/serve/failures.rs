@@ -42,6 +42,24 @@ fn errors_are_classified() {
     );
 }
 
+/// 再来一次也一样的错（AG-7，2026-11-20 主人本机撞上的原话）：报成核心不重试的类，原话照样带给人看。
+#[test]
+fn permanent_errors_are_not_retryable_and_keep_the_original_words() {
+    let disabled = "This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue.";
+    let invalid = "INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[28].function_declarations[0].parameters.properties[days].enum: only allowed for STRING type";
+    let cases = [(disabled, "auth"), (invalid, "unclassified")];
+    // 两句都跑完再比，一次看全。
+    let got: Vec<Value> = cases
+        .iter()
+        .map(|(said, _)| error_of(&format!("fail:{said}")))
+        .collect();
+    let want: Vec<Value> = cases
+        .iter()
+        .map(|(said, class)| json!({"class": class, "message": format!("agy failed (ERROR): {said}")}))
+        .collect();
+    assert_eq!(got, want);
+}
+
 #[test]
 fn a_missing_agy_says_how_to_configure_it() {
     let mut core = Core::start("missing", "sample:real-pong.jsonl");

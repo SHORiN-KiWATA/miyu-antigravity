@@ -2,25 +2,46 @@
 //!
 //! | 字里有 | 归成 |
 //! |---|---|
+//! | [`REJECTED`] 里的一种 | `unclassified`（请求本身有错） |
 //! | [`AUTH`] 里的一种 | `auth` |
 //! | [`QUOTA`] 里的一种 | `quota` |
 //! | [`RATE_LIMITED`] 里的一种 | `rate_limited` |
 //! | 别的 | 还没交过增量的 `retryable`，交过的 `unclassified` |
 //!
+//! 重试由核心照类决定（核心 `retry.rs`：只有 `retryable`、`rate_limited` 这几类再来，`auth`、`unclassified` 不来；
+//! 经池调用的 `auth` 还会冷却这个模型、换下一个）。所以再来也一样的错（账号被停用、请求本身有错）不能落到「别的」那一格。
+//!
 //! 内容策略拦截不走这张表：agy 把 Google 的拦截文案当正文流出来、`result` 还报成功，认法见 [`policy_start`]。
 //!
-//! 先后照表：几种都有的取靠前的。不分大小写。只看 `result.error`、`error_message` 步的字：agy 的标准错误每次起来都印一行
+//! 先后照表：几种都有的取靠前的。[`REJECTED`] 排第一：请求有错的原话会点出出错的属性名、工具名（`properties[quota]`），
+//! 名字里的字眼不该把它归成额度、认证。不分大小写。只看 `result.error`、`error_message` 步的字：agy 的标准错误每次起来都印一行
 //! 「not logged into Antigravity」再悄悄登录成功，拿它判会误杀（旧版 `stream.rs` 记的）。
 
 use serde_json::{Value, json};
 
-/// 没登录的字眼。
+/// 请求本身有错的字眼：agy 照 gRPC 的状态名报（`INVALID_ARGUMENT (code 400): …`，2026-11-20 主人本机）。Gemini 的
+/// 出错说明里 400、404 是请求写错、模型不存在，`failed_precondition` 是账号或地区的前提不满足，都要人改了才行。
+pub const REJECTED: &[&str] = &[
+    "invalid_argument",
+    "failed_precondition",
+    "not_found",
+    "(code 400)",
+    "(code 404)",
+];
+
+/// 没登录、账号用不了的字眼。账号被停用的原话（2026-11-20 主人本机）：「This service has been disabled in this account for
+/// violation of Terms of Service. Please submit an appeal to continue」；`permission_denied`（403）是账号没有权限。
 pub const AUTH: &[&str] = &[
     "not logged in",
     "unauthenticated",
     "login required",
     "sign in",
     "authentication",
+    "terms of service",
+    "submit an appeal",
+    "permission_denied",
+    "(code 401)",
+    "(code 403)",
 ];
 
 /// 额度用完的字眼（agy 把额度用完报成 `RESOURCE_EXHAUSTED`，旧版 2026-09-15 实测）。
@@ -104,7 +125,9 @@ impl Class {
 pub fn classify(said: &str, delivered: bool) -> Class {
     let lower = said.to_lowercase();
     let has = |needles: &[&str]| needles.iter().any(|needle| lower.contains(needle));
-    if has(AUTH) {
+    if has(REJECTED) {
+        Class::Unclassified
+    } else if has(AUTH) {
         Class::Auth
     } else if has(QUOTA) {
         Class::Quota
@@ -115,7 +138,7 @@ pub fn classify(said: &str, delivered: bool) -> Class {
     }
 }
 
-/// 认不出原因的出错（包括没有 `result` 就退出了）：还没交过增量的 `retryable`，交过的 `unclassified`。
+/// 认不出原因的出错（包括没有 `result` 就退出了、5xx 这种对面一时的毛病）：还没交过增量的 `retryable`，交过的 `unclassified`。
 #[must_use]
 pub fn otherwise(delivered: bool) -> Class {
     if delivered {

@@ -1,5 +1,11 @@
 use super::*;
 
+/// 账号被停用时 agy 报的原话（2026-11-20 主人本机）。
+const DISABLED: &str = "This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue.";
+
+/// Gemini 拒收整数 `enum` 时 agy 报的原话（2026-11-20 主人本机，im 包的 `qq_activity_ranking`）。
+const INVALID_ENUM: &str = "INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[28].function_declarations[0].parameters.properties[days].enum: only allowed for STRING type";
+
 #[test]
 fn table() {
     let cases = [
@@ -18,14 +24,51 @@ fn table() {
         // 几种都有的取靠前的：额度用完也常带「rate limit」。
         ("quota exhausted (rate limit)", false, Class::Quota),
         ("not logged in; quota unknown", false, Class::Auth),
+        // 2026-11-20 主人本机撞上的两句原话（AG-7）：账号被停用、请求本身有错，再来一次也一样。
+        (DISABLED, false, Class::Auth),
+        (DISABLED, true, Class::Auth),
+        (
+            "PERMISSION_DENIED (code 403): caller lacks permission",
+            false,
+            Class::Auth,
+        ),
+        (INVALID_ENUM, false, Class::Unclassified),
+        (INVALID_ENUM, true, Class::Unclassified),
+        (
+            "FAILED_PRECONDITION (code 400): User location is not supported",
+            false,
+            Class::Unclassified,
+        ),
+        (
+            "NOT_FOUND (code 404): model gemini-x is not found",
+            false,
+            Class::Unclassified,
+        ),
+        // 请求有错的原话里点到的属性名不拿来归类：名字里带 quota 的工具写坏了，也不是额度用完。
+        (
+            "INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[3].function_declarations[0].parameters.properties[quota].enum: only allowed for STRING type",
+            false,
+            Class::Unclassified,
+        ),
+        // 5xx 照旧可以再来。
+        (
+            "UNAVAILABLE (code 503): the model is overloaded",
+            false,
+            Class::Retryable,
+        ),
     ];
-    for (said, delivered, class) in cases {
-        assert_eq!(
-            classify(said, delivered),
-            class,
-            "{said:?} delivered={delivered}"
-        );
-    }
+    // 一次列出全部对不上的，不停在头一条。
+    let wrong: Vec<String> = cases
+        .into_iter()
+        .filter(|(said, delivered, class)| classify(said, *delivered) != *class)
+        .map(|(said, delivered, class)| {
+            format!(
+                "{said:?} delivered={delivered}: got {:?}, want {class:?}",
+                classify(said, delivered)
+            )
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 #[test]
