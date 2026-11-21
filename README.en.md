@@ -13,7 +13,7 @@ Linux and macOS only. The design and the measurements behind it are in [docs/00-
 ## Requirements
 
 - Antigravity CLI 1.4.0 or newer, logged in: run `agy` once in a terminal and check that it answers.
-- Miyu core 2026.11.0-rc.2.4 or newer (it has to know package-shipped providers, `[providers.<id>]` in the manifest). Older cores cannot install this package.
+- Miyu core 2026.11.0-rc.2.5 or newer from 0.1.3 on (0.1.2 needs 2026.11.0-rc.2.4): it has to know package-shipped providers (`[providers.<id>]`) and `base_url` in `[[driver]]`. Older cores cannot install this package.
 
 ## Install and configure
 
@@ -38,7 +38,7 @@ effort = "high"         # write it for high tiers: Miyu then waits longer for th
 ```
 
 If you created a provider by hand for 0.1.1 (`providers.agy`), you can remove it (`miyu config unset providers.agy.driver`)
-and use the one the package ships. This version needs core 2026.11.0-rc.2.4 or newer: an older core refuses to install it (it asks
+and use the one the package ships. This version needs core 2026.11.0-rc.2.5 or newer: an older core refuses to install it (it asks
 for a newer Miyu; 2026.11.0-rc.2.3 reports an unknown table `[providers]` in the manifest instead); upgrade the core first.
 
 Amounts: Miyu knows model names such as `gemini-…` and `claude-…` and shows an amount for every turn at the API price from its

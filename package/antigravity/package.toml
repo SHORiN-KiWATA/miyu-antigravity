@@ -2,9 +2,9 @@
 # 这家供应商的每一次调用交给本机的 Antigravity CLI（agy），用主人在 agy 里已有的登录和订阅额度。设计见 docs/00-设计.md。
 
 [package]
-version = "0.1.2"
+version = "0.1.3"
 protocol = [1, 1]
-miyu = "2026.11.0-rc.2.4"
+miyu = "2026.11.0-rc.2.5"
 name = { en = "Antigravity", zh = "Antigravity" }
 summary = { en = "Use the local Antigravity CLI (agy) as a model provider", zh = "把本机的 Antigravity CLI（agy）用作模型供应商" }
 author = "SHORiN-KiWATA"
@@ -29,6 +29,8 @@ capabilities = ["model.driver", "network"]
 name = "antigravity"
 cache = "best_effort"
 key = "none"
+# 不用地址：agy 自己连 Google 的服务（核心 FX-11）。界面照它不画地址那一行。
+base_url = "none"
 # agy 只收文字，图由核心转述（设计第九节）。
 images = false
 # agy 自己跑完、Miyu 只照实显示的工具（设计第七节）：代理文件的白名单只开这一件。
