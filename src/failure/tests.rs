@@ -71,6 +71,40 @@ fn table() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// 上下文超长的 400（AG-7 续）：报成核心的 `context_too_long`，核心先压缩再来；别的 400 照旧不算进来。按协议里的写法比，
+/// 不靠 [`Class`] 的变体名。
+#[test]
+fn context_too_long_is_told_apart_from_other_400s() {
+    let long = [
+        "INVALID_ARGUMENT (code 400): The input token count (1337419) exceeds the maximum number of tokens allowed (1048576).",
+        "The input token count (35868) exceeds the maximum number of tokens allowed (32768).",
+        "INVALID_ARGUMENT (code 400): Request exceeds the model's input token limit.",
+        "400 Input request contains (32981) tokens, which is more than the max tokens limit allowed: 32768",
+    ];
+    let other = [
+        INVALID_ENUM,
+        "INVALID_ARGUMENT (code 400): * GenerateContentRequest.generation_config.max_output_tokens: max_output_tokens must be positive",
+        "INVALID_ARGUMENT (code 400): Request contains an invalid argument.",
+        "FAILED_PRECONDITION (code 400): User location is not supported",
+    ];
+    let mut wrong = Vec::new();
+    for delivered in [false, true] {
+        for said in long {
+            let got = classify(said, delivered).as_str();
+            if got != "context_too_long" {
+                wrong.push(format!("{said:?} delivered={delivered}: got {got}"));
+            }
+        }
+        for said in other {
+            let got = classify(said, delivered).as_str();
+            if got != "unclassified" {
+                wrong.push(format!("{said:?} delivered={delivered}: got {got}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 #[test]
 fn otherwise_depends_on_whether_deltas_went_out() {
     assert_eq!(otherwise(false), Class::Retryable);

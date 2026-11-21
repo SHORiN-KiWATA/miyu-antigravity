@@ -47,8 +47,14 @@ fn errors_are_classified() {
 fn permanent_errors_are_not_retryable_and_keep_the_original_words() {
     let disabled = "This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue.";
     let invalid = "INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools[28].function_declarations[0].parameters.properties[days].enum: only allowed for STRING type";
-    let cases = [(disabled, "auth"), (invalid, "unclassified")];
-    // 两句都跑完再比，一次看全。
+    // 上下文超长的 400 报 `context_too_long`：核心先压缩再来，不是白白原样重发。
+    let long = "INVALID_ARGUMENT (code 400): The input token count (1337419) exceeds the maximum number of tokens allowed (1048576).";
+    let cases = [
+        (disabled, "auth"),
+        (invalid, "unclassified"),
+        (long, "context_too_long"),
+    ];
+    // 几句都跑完再比，一次看全。
     let got: Vec<Value> = cases
         .iter()
         .map(|(said, _)| error_of(&format!("fail:{said}")))
