@@ -26,6 +26,7 @@ pub mod leftovers;
 pub mod live;
 pub mod mcp;
 pub mod mcp_config;
+pub mod media;
 pub mod models;
 pub mod process;
 pub mod registry;

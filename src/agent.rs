@@ -14,8 +14,10 @@ use sha2::{Digest, Sha256};
 
 use crate::words;
 
-/// 代理文件里开着的 agy 原生工具（白名单）：只有不碰本机的 `search_web`（设计第七节）。清单 `hosted` 照这个写。
-pub const TOOLS: &[&str] = &["search_web"];
+/// 代理文件里开着的 agy 原生工具（白名单）：`search_web`（设计第七节），和看图、读文件用的 `view_file`（施工 AG-9，项目主人
+/// 2026-11-22 定：agy 的输入只收文字，图、文件只能由它自己读；`view_file` 读得到本机任何文件，不受 Miyu 的权限管，主人知道
+/// 这一点）。清单 `hosted` 照这个写。
+pub const TOOLS: &[&str] = &["search_web", "view_file"];
 
 /// 代理的名字：`miyu-` 加「[`TOOLS`]（逗号连起来）、一个 NUL、`system`」的 SHA-256 前 16 位十六进制。
 #[must_use]
@@ -157,7 +159,9 @@ mod tests {
     #[test]
     fn name_is_the_first_16_hex_digits_of_sha256() {
         // 「白名单 NUL 正文」的 SHA-256：正文是 system、空一行、`words::AGENT_NOTE`。
-        assert_eq!(name("You are helpful."), "miyu-e50ecc69ba43146b");
+        assert_eq!(name("You are helpful."), "miyu-576e7390b131d299");
+        // 白名单只有 search_web 那一版（0.1.3 以前）的名字不会再撞上。
+        assert_ne!(name("You are helpful."), "miyu-e50ecc69ba43146b");
         // 正文里没有那段说明的旧名字不会再撞上。
         assert_ne!(name("You are helpful."), "miyu-c596dc5fc422a390");
         // 只哈希 system 的旧名字（白名单是空的那一版）不会再撞上。
@@ -173,24 +177,27 @@ mod tests {
             format!(
                 "---\nname: miyu-0011223344556677\n\
              description: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\n\
-             mainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\nLine one.\n\nLine two.\n\n{}",
+             mainAgent: true\nsubagent: false\ntools: [search_web, view_file]\n---\n\nLine one.\n\nLine two.\n\n{}",
                 crate::words::AGENT_NOTE
             )
         );
     }
 
     #[test]
-    fn the_whitelist_is_search_web_alone_and_the_name_follows_it() {
-        assert_eq!(TOOLS, ["search_web"]);
+    fn the_whitelist_is_search_web_and_view_file_and_the_name_follows_it() {
+        assert_eq!(TOOLS, ["search_web", "view_file"]);
         let text = content("n", "s");
-        assert!(text.contains("\ntools: [search_web]\n"), "{text}");
+        assert!(
+            text.contains("\ntools: [search_web, view_file]\n"),
+            "{text}"
+        );
         assert!(!text.contains("tools: []"), "{text}");
         // 名字的输入是「白名单 NUL 正文」：自己算一遍对得上，白名单换一份、正文少了那段说明，名字就变。
         let digest = |input: &str| hex(&Sha256::digest(input.as_bytes())[..8]);
         let body = body("s");
         assert_eq!(
             name("s"),
-            format!("miyu-{}", digest(&format!("search_web\0{body}")))
+            format!("miyu-{}", digest(&format!("search_web,view_file\0{body}")))
         );
         assert_ne!(name("s"), format!("miyu-{}", digest("search_web\0s")));
         assert_ne!(name("s"), format!("miyu-{}", digest(&body)));

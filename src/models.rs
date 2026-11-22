@@ -29,7 +29,8 @@ pub fn parse(output: &str) -> Vec<String> {
 /// 回答 `driver.models` 的 `result`。
 #[must_use]
 pub fn answer(slugs: &[String]) -> Value {
-    json!({"models": slugs.iter().map(|slug| json!({"id": slug})).collect::<Vec<_>>()})
+    // 都看得了图（施工 AG-9）：图存成文件、agy 用 view_file 看；报上去核心就不先找看图模型转述。
+    json!({"models": slugs.iter().map(|slug| json!({"id": slug, "vision": true})).collect::<Vec<_>>()})
 }
 
 /// 照 `config` 跑 `agy models`，至多 `timeout`。
@@ -126,7 +127,7 @@ mod tests {
     fn answer_lists_ids() {
         assert_eq!(
             answer(&["a".into(), "b".into()]),
-            json!({"models": [{"id": "a"}, {"id": "b"}]})
+            json!({"models": [{"id": "a", "vision": true}, {"id": "b", "vision": true}]})
         );
     }
 }

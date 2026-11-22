@@ -6,14 +6,14 @@ The Miyu extension package `antigravity`. It registers the model driver `antigra
 call of that provider to the local Antigravity CLI (`agy`), using the login and subscription quota you already have in agy.
 
 agy is used as a model only. Tools such as reading files, running commands and editing files are still run by Miyu, under
-Miyu's permissions, confirmations and undo. agy's own native tools are all turned off, except web search (`search_web`).
+Miyu's permissions, confirmations and undo. agy's own native tools are all turned off, except web search (`search_web`) and viewing files (`view_file`).
 
 Linux and macOS only. The design and the measurements behind it are in [docs/00-设计.md](docs/00-设计.md) (Chinese).
 
 ## Requirements
 
 - Antigravity CLI 1.4.0 or newer, logged in: run `agy` once in a terminal and check that it answers.
-- Miyu core 2026.11.0-rc.2.5 or newer from 0.1.3 on (0.1.2 needs 2026.11.0-rc.2.4): it has to know package-shipped providers (`[providers.<id>]`) and `base_url` in `[[driver]]`. Older cores cannot install this package.
+- Miyu core 2026.11.0-rc.2.6 or newer from 0.1.4 on (0.1.3 needs 2026.11.0-rc.2.5, 0.1.2 needs 2026.11.0-rc.2.4): it has to know package-shipped providers (`[providers.<id>]`), and `base_url` and `files` in `[[driver]]`. Older cores cannot install this package.
 
 ## Install and configure
 
@@ -38,7 +38,7 @@ effort = "high"         # write it for high tiers: Miyu then waits longer for th
 ```
 
 If you created a provider by hand for 0.1.1 (`providers.agy`), you can remove it (`miyu config unset providers.agy.driver`)
-and use the one the package ships. This version needs core 2026.11.0-rc.2.5 or newer: an older core refuses to install it (it asks
+and use the one the package ships. This version needs core 2026.11.0-rc.2.6 or newer: an older core refuses to install it (it asks
 for a newer Miyu; 2026.11.0-rc.2.3 reports an unknown table `[providers]` in the manifest instead); upgrade the core first.
 
 Amounts: Miyu knows model names such as `gemini-…` and `claude-…` and shows an amount for every turn at the API price from its
@@ -96,7 +96,10 @@ miyu pkg remove antigravity
   treats 180 seconds of silence as a timeout and retries; this package widens that to 300 seconds. Write the matching
   `effort` in the model entry of high tiers and the limit grows further (twice for high, three times for xhigh).
 - **agy adds about 3,400 tokens of its own to every request**, counted against your agy quota.
-- **Images**: agy takes text only, so images are described by the vision model configured in Miyu first.
+- **Images and files**: agy takes text only, so the images and files in a conversation (PDFs, audio, video) are saved as
+  files on this computer first, and agy is told their paths and opens them with its own `view_file`.
+- **Note**: `view_file` can read any file on this computer, outside Miyu's permissions. In a group chat or any conversation
+  other people take part in, they can ask the AI to read files on your computer too.
 - **How turns connect**: the next turn of a conversation goes to the agy process that is still alive, and only the new
   messages are sent. When that is not possible (the core restarted, compaction, undo, a different model or persona, a tool
   interrupted and then more said), a new agy conversation is started and the whole history is sent as one text; beyond about

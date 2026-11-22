@@ -318,7 +318,7 @@ fn the_agent_file_whitelists_search_web_and_the_agent_check_still_passes() {
     let (core, got) = run("h-agent", "plan:search", "search for it");
     succeeded(&got);
     let body = format!("{system}\n\n{}", miyu_antigravity::words::AGENT_NOTE);
-    let digest = Sha256::digest(format!("search_web\0{body}").as_bytes());
+    let digest = Sha256::digest(format!("search_web,view_file\0{body}").as_bytes());
     let name = format!("miyu-{}", &hex(&digest[..8])[..16]);
     let record = core.records().remove(0);
     let argv: Vec<&str> = record["argv"]
@@ -337,7 +337,10 @@ fn the_agent_file_whitelists_search_web_and_the_agent_check_still_passes() {
         .join(&name)
         .join("agent.md");
     let content = std::fs::read_to_string(file).unwrap();
-    assert!(content.contains("\ntools: [search_web]\n"), "{content}");
+    assert!(
+        content.contains("\ntools: [search_web, view_file]\n"),
+        "{content}"
+    );
     assert!(!content.contains("tools: []"), "{content}");
     assert!(content.ends_with(&format!("---\n\n{body}")), "{content}");
 }

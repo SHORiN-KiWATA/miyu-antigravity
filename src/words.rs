@@ -54,6 +54,21 @@ pub fn image_described(name: Option<&str>, description: &str) -> String {
     format!("[image{}, described: {description}]", quoted(name))
 }
 
+/// 一张图，存成了文件（施工 AG-9）：agy 用 `view_file` 看。
+#[must_use]
+pub fn image_saved(name: Option<&str>, path: &str) -> String {
+    format!(
+        "[image{} saved at {path}; open it with view_file to see it]",
+        quoted(name)
+    )
+}
+
+/// 一个文件，存成了文件（施工 AG-9）：agy 用 `view_file` 读。
+#[must_use]
+pub fn file_saved(name: &str, path: &str) -> String {
+    format!("[file \"{name}\" saved at {path}; open it with view_file to read it]")
+}
+
 /// 一张图，没有转述。
 #[must_use]
 pub fn image_omitted(name: Option<&str>) -> String {

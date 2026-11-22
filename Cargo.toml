@@ -1,7 +1,7 @@
 [package]
 name = "miyu-antigravity"
 description = "Miyu 的模型驱动扩展：把本机的 Antigravity CLI（agy）当模型供应商"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 rust-version = "1.97"
 license = "AGPL-3.0-or-later"
@@ -16,6 +16,8 @@ path = "src/main.rs"
 serde_json = { version = "1", features = ["preserve_order"] }
 # 代理目录名是系统提示词的 SHA-256 前 16 位（设计第九节）；回答里的 `sent` 也是 SHA-256。
 sha2 = "0.11"
+# 核心交的图、文件是 base64（施工 AG-9）：解开存成文件给 agy 的 view_file 看。
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 # 对 agy 的进程组发 SIGTERM、SIGKILL（unsafe_code = "forbid"，不直接调 libc）。

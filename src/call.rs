@@ -17,6 +17,7 @@
 mod resume;
 mod talk;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Instant, SystemTime};
@@ -35,7 +36,7 @@ use crate::registry::Registry;
 use crate::rpc::Out;
 use crate::sessions::{Identity, Incoming, Meta};
 use crate::turn::{self, Turn};
-use crate::{agent, agy, schema, transcript, workspace};
+use crate::{agent, agy, media, schema, transcript, workspace};
 use resume::{resume, resume_pending};
 use talk::{Ended, succeeded, talk, write_input};
 
@@ -117,6 +118,16 @@ pub fn run(
     let Some(request) = params.get("request") else {
         return Answer::BadParams("params.request is missing".into());
     };
+    // 核心交的图、文件存成文件，转写里写上路径，agy 用 view_file 看（施工 AG-9）。
+    let saved = match workspace::state_dir() {
+        Ok(state) => media::save(params, &state.join("media")),
+        Err(error) => {
+            eprintln!("call {call}: images and files not saved, no state directory: {error}");
+            BTreeMap::new()
+        }
+    };
+    let request = transcript::with_saved(request, &saved);
+    let request = &*request;
     let Some(system) = request.get("system").and_then(Value::as_str) else {
         return Answer::BadParams("params.request.system is not text".into());
     };

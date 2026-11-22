@@ -14,7 +14,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// 系统提示词对应的代理名：`miyu-` 加「白名单 NUL system」的 SHA-256 前 16 位。
 fn agent_name(system: &str) -> String {
-    let input = format!("search_web\0{system}\n\n{}", words::AGENT_NOTE);
+    let input = format!("search_web,view_file\0{system}\n\n{}", words::AGENT_NOTE);
     format!("miyu-{}", &hex(&Sha256::digest(input.as_bytes()))[..16])
 }
 
@@ -26,7 +26,7 @@ fn handshake_models_unknown_methods_and_clean_exit() {
     assert_eq!(answer["id"], "m1");
     assert_eq!(
         answer["result"],
-        json!({"models": [{"id": "gemini-3.8-flash-low"}, {"id": "claude-opus-5-5-high"}]})
+        json!({"models": [{"id": "gemini-3.8-flash-low", "vision": true}, {"id": "claude-opus-5-5-high", "vision": true}]})
     );
 
     core.send(&json!({"jsonrpc": "2.0", "id": 7, "method": "driver.encode", "params": {}}));
@@ -123,7 +123,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
     assert_eq!(
         std::fs::read_to_string(agent_file).unwrap(),
         format!(
-            "---\nname: {agent}\ndescription: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\nmainAgent: true\nsubagent: false\ntools: [search_web]\n---\n\n{system}\n\n{}",
+            "---\nname: {agent}\ndescription: Miyu system prompt (written by the Miyu antigravity package; renamed whenever the prompt changes)\nmainAgent: true\nsubagent: false\ntools: [search_web, view_file]\n---\n\n{system}\n\n{}",
             words::AGENT_NOTE
         )
     );

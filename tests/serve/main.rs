@@ -19,6 +19,8 @@ mod failures;
 mod hosted;
 #[cfg(test)]
 mod leftovers;
+// 图、文件存成文件、转写里写路径（施工 AG-9）。
+mod media;
 #[cfg(test)]
 mod support;
 #[cfg(test)]

@@ -134,20 +134,55 @@ fn parse(request: &Value) -> Result<Vec<Message>, BadRequest> {
         .get("messages")
         .and_then(Value::as_array)
         .ok_or_else(|| BadRequest("request.messages is not an array".into()))?;
-    let described: BTreeMap<&str, &str> = request
-        .get("described")
-        .and_then(Value::as_object)
-        .map(|map| {
-            map.iter()
-                .filter_map(|(blob, text)| Some((blob.as_str(), text.as_str()?)))
-                .collect()
-        })
-        .unwrap_or_default();
-
+    let texts = |key: &str| -> BTreeMap<&str, &str> {
+        request
+            .get(key)
+            .and_then(Value::as_object)
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(blob, text)| Some((blob.as_str(), text.as_str()?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let known = Known {
+        described: texts("described"),
+        saved: texts(SAVED),
+    };
     messages
         .iter()
-        .map(|message| Message::read(message, &described))
+        .map(|message| Message::read(message, &known))
         .collect()
+}
+
+/// 请求里存成了文件的图、文件那一格（施工 AG-9）：`{"<blob 哈希>": "<路径>"}`，核心不写这一格，是本包照 `blobs` 存好以后
+/// 加进来的（[`with_saved`]）。
+pub const SAVED: &str = "miyu_antigravity_saved";
+
+/// 照 `saved`（blob 哈希 → 存成的文件）给 `request` 加上 [`SAVED`] 那一格；没有存成的原样交回。
+#[must_use]
+pub fn with_saved<'a>(
+    request: &'a Value,
+    saved: &BTreeMap<String, std::path::PathBuf>,
+) -> std::borrow::Cow<'a, Value> {
+    if saved.is_empty() {
+        return std::borrow::Cow::Borrowed(request);
+    }
+    let mut request = request.clone();
+    if let Some(object) = request.as_object_mut() {
+        let paths = saved
+            .iter()
+            .map(|(hash, path)| (hash.clone(), Value::from(path.display().to_string())))
+            .collect();
+        object.insert(SAVED.to_string(), Value::Object(paths));
+    }
+    std::borrow::Cow::Owned(request)
+}
+
+/// 图、文件块转成字时要查的：核心交的图的转述，本包存成的文件的路径。
+struct Known<'a> {
+    described: BTreeMap<&'a str, &'a str>,
+    saved: BTreeMap<&'a str, &'a str>,
 }
 
 /// 历史从哪一条起留：从最新往回加，放不下 `room` 就停；再往后挪到下一条 user 消息，让转写从一轮的开头起（截在回复、工具
@@ -182,7 +217,7 @@ struct Message {
 }
 
 impl Message {
-    fn read(message: &Value, described: &BTreeMap<&str, &str>) -> Result<Message, BadRequest> {
+    fn read(message: &Value, known: &Known<'_>) -> Result<Message, BadRequest> {
         let role = match message.get("role").and_then(Value::as_str) {
             Some("user") => Role::User,
             Some("assistant") => Role::Assistant,
@@ -201,7 +236,7 @@ impl Message {
             .ok_or_else(|| BadRequest("a message has no blocks array".into()))?;
         let body = blocks
             .iter()
-            .filter_map(|block| block_text(block, described))
+            .filter_map(|block| block_text(block, known))
             .collect::<Vec<_>>()
             .join("\n");
         Ok(Message { role, body })
@@ -219,17 +254,30 @@ impl Message {
 }
 
 /// 一块转成的字；不写的（思考、空的字、不认识的块）是 `None`。
-fn block_text(block: &Value, described: &BTreeMap<&str, &str>) -> Option<String> {
+fn block_text(block: &Value, known: &Known<'_>) -> Option<String> {
     let field = |key: &str| block.get(key).and_then(Value::as_str);
+    let saved = field("blob").and_then(|blob| known.saved.get(blob));
     match field("type")? {
         "text" => field("text")
             .filter(|text| !text.is_empty())
             .map(str::to_string),
-        "image" => Some(match field("blob").and_then(|blob| described.get(blob)) {
-            Some(description) => words::image_described(field("name"), description),
-            None => words::image_omitted(field("name")),
-        }),
-        "file" => Some(words::file_omitted(field("name").unwrap_or_default())),
+        "image" => Some(
+            match (
+                saved,
+                field("blob").and_then(|blob| known.described.get(blob)),
+            ) {
+                (Some(path), _) => words::image_saved(field("name"), path),
+                (None, Some(description)) => words::image_described(field("name"), description),
+                (None, None) => words::image_omitted(field("name")),
+            },
+        ),
+        "file" => {
+            let name = field("name").unwrap_or_default();
+            Some(match saved {
+                Some(path) => words::file_saved(name, path),
+                None => words::file_omitted(name),
+            })
+        }
         "path" => Some(words::path_attached(
             field("name").unwrap_or_default(),
             field("path").unwrap_or_default(),
