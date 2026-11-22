@@ -27,8 +27,8 @@ pub struct Core {
     pub home: PathBuf,
     /// 扩展的 `MIYU_STATE_DIR`。
     pub state: PathBuf,
-    /// 扩展的 `MIYU_RUNTIME_DIR`：给 MCP 服务用的套接字放在这里。Unix 套接字路径有长度上限，所以放在短的系统临时目录下，不在
-    /// 很深的 target 目录里。
+    /// 扩展的 `MIYU_RUNTIME_DIR`：给 MCP 服务用的套接字放在这里。Unix 套接字路径有长度上限，所以放在 `/tmp` 下，不在很深的
+    /// target 目录里，也不用 macOS 很长的系统临时目录。
     pub runtime: PathBuf,
     /// 假 agy 写记录的目录。
     pub record: PathBuf,
@@ -168,11 +168,17 @@ impl Core {
             dir
         });
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let runtime = std::env::temp_dir().join(format!(
-            "ag-{}-{}",
-            std::process::id(),
-            root.file_name().unwrap().to_string_lossy()
-        ));
+        // 放在 /tmp 下、只用进程号和序号起名（施工 AG-10）：macOS 的系统临时目录（/var/folders/…/T/）本身就有四十多个字节，
+        // 再带上测试名、两次进程号，进程号一到五位数套接字路径就过了 100 字节，带工具的调用全挂。
+        let serial = root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .rsplit('-')
+            .next()
+            .unwrap()
+            .to_string();
+        let runtime = Path::new("/tmp").join(format!("ag-{}-{serial}", std::process::id()));
         std::fs::create_dir_all(&runtime).unwrap();
         let binary = bin.join("agy");
         std::fs::write(
