@@ -224,9 +224,9 @@ fn declared_tools(request: &Value) -> Result<Vec<Tool>, String> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string(),
-                input_schema: schema::shape(
+                input_schema: schema::with_agy_extras(schema::shape(
                     tool.get("parameters").cloned().unwrap_or_else(|| json!({})),
-                ),
+                )),
             })
         })
         .collect()

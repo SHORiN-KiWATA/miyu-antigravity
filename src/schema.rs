@@ -202,5 +202,45 @@ pub fn gemini_compatible(schema: Value) -> Value {
     Value::Object(out)
 }
 
+/// agy 自己的工具每件都带一个 `toolAction`（这一步在做什么），模型照这个习惯也往 Miyu 的工具里填；agy 照参数格式校验，
+/// 没声明的属性整次调用拒掉（`additional properties 'toolAction' not allowed`，接着整轮中断）。2026-11-23 主人的群聊会话从
+/// 某一次起每次工具调用都这样被拒、一直答不出来（施工 AG-11）。这几样声明成可选的文本，转给 Miyu 之前去掉（[`without_agy_extras`]）。
+pub const AGY_EXTRAS: &[&str] = &["toolAction"];
+
+/// 给一件工具的参数格式（已经 [`shape`] 过）补上 [`AGY_EXTRAS`]：对象类型（或没写类型）的才补，已经有同名属性的不动。
+#[must_use]
+pub fn with_agy_extras(schema: Value) -> Value {
+    let Value::Object(mut map) = schema else {
+        return schema;
+    };
+    if map.get("type").is_some_and(|kind| kind != "object") {
+        return Value::Object(map);
+    }
+    map.entry("type").or_insert_with(|| json!("object"));
+    if let Value::Object(props) = map
+        .entry("properties")
+        .or_insert_with(|| Value::Object(Map::new()))
+    {
+        for extra in AGY_EXTRAS {
+            props
+                .entry(*extra)
+                .or_insert_with(|| json!({ "type": "string" }));
+        }
+    }
+    Value::Object(map)
+}
+
+/// 转给 Miyu 的参数去掉 [`AGY_EXTRAS`]：那是 agy 的习惯，Miyu 的工具不认。
+#[must_use]
+pub fn without_agy_extras(arguments: Value) -> Value {
+    let Value::Object(mut map) = arguments else {
+        return arguments;
+    };
+    for extra in AGY_EXTRAS {
+        map.remove(*extra);
+    }
+    Value::Object(map)
+}
+
 #[cfg(test)]
 mod tests;

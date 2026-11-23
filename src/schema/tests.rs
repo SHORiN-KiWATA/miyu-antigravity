@@ -198,3 +198,34 @@ fn non_objects_pass_through_and_an_empty_required_is_dropped() {
     assert!(shaped.get("required").is_none());
     assert_eq!(shape(json!({"type": ["null"]}))["nullable"], true);
 }
+
+/// 施工 AG-11：agy 照参数格式校验，模型照 agy 自己工具的习惯多填的 `toolAction` 没声明就整次调用被拒。
+#[test]
+fn agy_extras_are_declared_optional_and_stripped_before_miyu() {
+    let shaped = with_agy_extras(shape(json!({
+        "type": "object",
+        "properties": { "msg": { "type": "string" } },
+        "required": ["msg"],
+        "additionalProperties": false
+    })));
+    assert_eq!(
+        shaped["properties"]["toolAction"],
+        json!({ "type": "string" })
+    );
+    assert_eq!(shaped["required"], json!(["msg"]), "补的是可选的");
+    // 没有参数的工具（整形后只剩 `{"type":"object"}`）也补上。
+    let bare = with_agy_extras(shape(json!({ "type": "object", "properties": {} })));
+    assert_eq!(
+        bare["properties"]["toolAction"],
+        json!({ "type": "string" })
+    );
+    // 已经有同名属性的照工具自己的。
+    let own = with_agy_extras(
+        json!({ "type": "object", "properties": { "toolAction": { "type": "integer" } } }),
+    );
+    assert_eq!(own["properties"]["toolAction"]["type"], "integer");
+    assert_eq!(
+        without_agy_extras(json!({ "msg": "1", "toolAction": "Quoting the message" })),
+        json!({ "msg": "1" })
+    );
+}

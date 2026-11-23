@@ -98,7 +98,7 @@ fn handle(line: &str, out: &Out, bridge: &Arc<Option<Bridge>>) {
                 .get("arguments")
                 .filter(|arguments| !arguments.is_null())
                 .cloned()
-                .unwrap_or_else(|| json!({}));
+                .map_or_else(|| json!({}), crate::schema::without_agy_extras);
             spawn(
                 out,
                 id,
