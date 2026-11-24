@@ -50,7 +50,8 @@ fn pong_is_one_text_block_and_its_usage() {
 }
 
 #[test]
-fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_sums_usage() {
+fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_sizes_context_by_the_last_request()
+ {
     let (deltas, answer, _) = run(SEARCH);
     // 两件工具各是一块供应商侧工具（没有结果：这里没人去读转录），正文在它们后面，块一块接一块。
     let mut expected = vec![
@@ -74,12 +75,13 @@ fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_sums
     }
     expected.push(json!({"end": {"index": 2}}));
     assert_eq!(deltas, expected, "步 1、3 没有字，不开块");
-    // 三个 DONE 的用量加起来，不是 result 的累计。
+    // 输入照最后一次请求（施工 AG-12）：agy 跑自带工具时一轮里来回请求几次，每次都带整段上下文；核心拿输入当上下文大小，
+    // 加起来就虚高（2026-11-23 主人的群会话因此连压、停在 too_large）。输出、思考照旧三个 DONE 加起来。
     assert_eq!(
         answer,
         Some(json!({"usage": {
-            "uncached": 2741 + 2482 + 2330,
-            "cache_read": 2758 + 3208,
+            "uncached": 2330,
+            "cache_read": 3208,
             "cache_write": 0,
             "output": 38 + 47 + 25,
             "reasoning": 0

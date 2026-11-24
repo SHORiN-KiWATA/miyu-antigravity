@@ -185,13 +185,19 @@ fn a_failed_result_while_waiting_is_classified_as_usual() {
 }
 
 #[test]
-fn usage_of_every_response_before_the_hand_back_is_summed() {
+fn usage_before_the_hand_back_takes_the_last_input_and_sums_the_output() {
+    // 施工 AG-12：输入、缓存命中照最后一次请求（上下文大小），输出、思考两步加起来。
     let mut turn = Turn::new("a");
     turn.feed(text(1, true, "one"));
     turn.feed(text(2, true, "two"));
     turn.feed(tool_step("mcp_miyu_bash", "ACTIVE"));
     let fed = turn.tool_call(1, "bash", &json!({}));
-    assert_eq!(fed.answer, Some(usage_answer(2)));
+    assert_eq!(
+        fed.answer,
+        Some(json!({"usage": {
+            "uncached": 10, "cache_read": 7, "cache_write": 0, "output": 6, "reasoning": 2
+        }}))
+    );
     assert_eq!(fed.deltas.first().unwrap()["start"]["index"], 2);
 }
 

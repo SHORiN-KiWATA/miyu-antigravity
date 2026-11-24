@@ -151,7 +151,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
 }
 
 #[test]
-fn search_read_streams_only_the_answer_text_and_sums_usage() {
+fn search_read_streams_only_the_answer_text_and_sizes_context_by_the_last_request() {
     let mut core = Core::start("search", "sample:real-search-read.jsonl");
     core.call("r1", "d1", &request("s", "read the spec"));
     let got = core.collect("r1", "d1");
@@ -182,7 +182,8 @@ fn search_read_streams_only_the_answer_text_and_sums_usage() {
     );
     assert_eq!(
         got.response["result"]["usage"],
-        json!({"uncached": 7553, "cache_read": 5966, "cache_write": 0, "output": 110, "reasoning": 0})
+        // 施工 AG-12：输入照最后一次请求（2330 + 3208 是这时的上下文），输出三步加起来。
+        json!({"uncached": 2330, "cache_read": 3208, "cache_write": 0, "output": 110, "reasoning": 0})
     );
 }
 

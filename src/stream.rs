@@ -55,14 +55,15 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// 两份加起来。
+    /// 一轮里接着的下一次请求（施工 AG-12）：输入、缓存命中照后一次（那就是这时的上下文大小，核心拿它当上下文用了多少），
+    /// 输出、思考加起来。agy 跑自带工具时一轮里来回请求几次，每次都带整段上下文，输入加起来就虚高。
     #[must_use]
-    pub fn plus(self, other: Usage) -> Usage {
+    pub fn then(self, later: Usage) -> Usage {
         Usage {
-            input: self.input + other.input,
-            output: self.output + other.output,
-            thinking: self.thinking + other.thinking,
-            cache_read: self.cache_read + other.cache_read,
+            input: later.input,
+            output: self.output + later.output,
+            thinking: self.thinking + later.thinking,
+            cache_read: later.cache_read,
         }
     }
 }

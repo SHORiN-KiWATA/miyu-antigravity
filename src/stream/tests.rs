@@ -259,20 +259,27 @@ fn a_line_that_is_not_json_is_an_error() {
 }
 
 #[test]
-fn usage_adds_up() {
-    let a = Usage {
+fn the_next_request_takes_the_input_and_adds_the_output() {
+    // 施工 AG-12：输入、缓存命中照后一次（上下文大小），输出、思考加起来。
+    let first = Usage {
         input: 1,
         output: 2,
         thinking: 3,
         cache_read: 4,
     };
+    let later = Usage {
+        input: 10,
+        output: 20,
+        thinking: 30,
+        cache_read: 40,
+    };
     assert_eq!(
-        a.plus(a),
+        first.then(later),
         Usage {
-            input: 2,
-            output: 4,
-            thinking: 6,
-            cache_read: 8
+            input: 10,
+            output: 22,
+            thinking: 33,
+            cache_read: 40
         }
     );
 }

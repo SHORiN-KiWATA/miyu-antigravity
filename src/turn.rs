@@ -6,7 +6,8 @@
 //!   工具块（`turn/hosted.rs`）。MCP 服务转来的那一件调用（[`Turn::tool_call`]）记「MCP 那边到了」。**两边都到了**才交一块工具调用并结束这一次（回答照常是
 //!   用量，[`Fed::handed`] 带调用编号）：先后以流为准（它前面的正文都已读完），内容（名字、`arguments` 原文）以 MCP 那边为准。
 //!   只到了一边的，[`Turn::waiting`] 说在等哪一边，等多久由调用的人管（[`Turn::timeout`] 说到点了怎么办）。
-//! - `result`：`SUCCESS` 的回用量（这一次里每个 `agent_response DONE` 的 `usage` 加起来；一条都没有的不报）；不是成功的照
+//! - `result`：`SUCCESS` 的回用量（这一次里各个 `agent_response DONE` 的 `usage`：输入、缓存命中照最后一个，输出、思考加起来，
+//!   施工 AG-12；一条都没有的不报）；不是成功的照
 //!   [`failure`] 归类；正文就是拦截文案的回 `content_policy`（不管 `status`）。
 //! - `init.agent` 不是要的代理：当场结束，`unclassified`。
 
@@ -294,7 +295,7 @@ impl Turn {
         }
         if done {
             if let Some(usage) = usage {
-                self.usage = Some(self.usage.map_or(usage, |sum| sum.plus(usage)));
+                self.usage = Some(self.usage.map_or(usage, |sum| sum.then(usage)));
             }
             self.close_text(deltas);
         }
