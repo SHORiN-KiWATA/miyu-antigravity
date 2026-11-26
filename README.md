@@ -17,7 +17,7 @@ This package supports Linux and macOS, not Windows. The design and the test reco
 Before you install this package, have these two things ready:
 
 - Install Antigravity CLI 1.4.0 or newer and log in. Run `agy` once in a terminal; if it can hold a normal conversation, you are ready.
-- The Miyu core must be 2026.11.0-rc.2.6 or newer. If the core is too old, this package cannot be installed: the install fails and either asks you to update Miyu first, or reports an unrecognized table `[providers]` in the manifest. If you see either message, upgrade the core first.
+- The Miyu core must be 2026.11.0-rc.5 or newer. If the core is too old, this package cannot be installed: the install fails and either asks you to update Miyu first, or reports an unrecognized table `[providers]` in the manifest. If you see either message, upgrade the core first.
 
 ## Installing and configuring
 
