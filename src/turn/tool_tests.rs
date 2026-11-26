@@ -33,7 +33,7 @@ fn text(step: u64, done: bool, text: &str) -> Event {
 fn usage_answer(times: u64) -> Value {
     json!({"usage": {
         "uncached": 10 * times, "cache_read": 7 * times, "cache_write": 0,
-        "output": 3 * times, "reasoning": times
+        "output": 3 * times, "reasoning": times, "context": 20
     }})
 }
 
@@ -185,8 +185,8 @@ fn a_failed_result_while_waiting_is_classified_as_usual() {
 }
 
 #[test]
-fn usage_before_the_hand_back_takes_the_last_input_and_sums_the_output() {
-    // 施工 AG-12：输入、缓存命中照最后一次请求（上下文大小），输出、思考两步加起来。
+fn usage_before_the_hand_back_is_summed_with_the_last_context() {
+    // 施工 AG-13：记账两步加起来，上下文大小另报最后一步的。
     let mut turn = Turn::new("a");
     turn.feed(text(1, true, "one"));
     turn.feed(text(2, true, "two"));
@@ -195,7 +195,7 @@ fn usage_before_the_hand_back_takes_the_last_input_and_sums_the_output() {
     assert_eq!(
         fed.answer,
         Some(json!({"usage": {
-            "uncached": 10, "cache_read": 7, "cache_write": 0, "output": 6, "reasoning": 2
+            "uncached": 20, "cache_read": 14, "cache_write": 0, "output": 6, "reasoning": 2, "context": 20
         }}))
     );
     assert_eq!(fed.deltas.first().unwrap()["start"]["index"], 2);

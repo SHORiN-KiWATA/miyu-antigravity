@@ -14,7 +14,7 @@ fn sha256(text: &str) -> String {
 }
 
 fn usage_once() -> Value {
-    json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1})
+    json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1, "context": 20})
 }
 
 /// 一件工具调用走完：交回、带结果来、接着说完、下一轮还是同一个 agy 进程（编号 1）。

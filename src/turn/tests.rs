@@ -35,7 +35,7 @@ fn pong_is_one_text_block_and_its_usage() {
     assert_eq!(
         answer,
         Some(
-            json!({"usage": {"uncached": 2679, "cache_read": 0, "cache_write": 0, "output": 1, "reasoning": 0}})
+            json!({"usage": {"uncached": 2679, "cache_read": 0, "cache_write": 0, "output": 1, "reasoning": 0, "context": 2680}})
         )
     );
     assert_eq!(
@@ -50,7 +50,7 @@ fn pong_is_one_text_block_and_its_usage() {
 }
 
 #[test]
-fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_sizes_context_by_the_last_request()
+fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_reports_the_last_context()
  {
     let (deltas, answer, _) = run(SEARCH);
     // 两件工具各是一块供应商侧工具（没有结果：这里没人去读转录），正文在它们后面，块一块接一块。
@@ -75,16 +75,17 @@ fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_size
     }
     expected.push(json!({"end": {"index": 2}}));
     assert_eq!(deltas, expected, "步 1、3 没有字，不开块");
-    // 输入照最后一次请求（施工 AG-12）：agy 跑自带工具时一轮里来回请求几次，每次都带整段上下文；核心拿输入当上下文大小，
-    // 加起来就虚高（2026-11-23 主人的群会话因此连压、停在 too_large）。输出、思考照旧三个 DONE 加起来。
+    // 记账照三个 DONE 加起来；上下文大小另报最后一次请求的（施工 AG-13，核心 ACP-1）：agy 跑自带工具时一轮里来回请求
+    // 几次，每次都带整段上下文，核心拿加起来的当上下文大小就虚高（2026-11-23 主人的群会话因此停在 too_large）。
     assert_eq!(
         answer,
         Some(json!({"usage": {
-            "uncached": 2330,
-            "cache_read": 3208,
+            "uncached": 2741 + 2482 + 2330,
+            "cache_read": 2758 + 3208,
             "cache_write": 0,
             "output": 38 + 47 + 25,
-            "reasoning": 0
+            "reasoning": 0,
+            "context": 2330 + 3208 + 25
         }}))
     );
 }

@@ -71,7 +71,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
     let result = &got.response["result"];
     assert_eq!(
         result["usage"],
-        json!({"uncached": 2679, "cache_read": 0, "cache_write": 0, "output": 1, "reasoning": 0})
+        json!({"uncached": 2679, "cache_read": 0, "cache_write": 0, "output": 1, "reasoning": 0, "context": 2680})
     );
 
     // 假 agy 收到的命令行、工作目录、HOME、标准输入那一行。
@@ -151,7 +151,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
 }
 
 #[test]
-fn search_read_streams_only_the_answer_text_and_sizes_context_by_the_last_request() {
+fn search_read_streams_only_the_answer_text_and_reports_the_last_context() {
     let mut core = Core::start("search", "sample:real-search-read.jsonl");
     core.call("r1", "d1", &request("s", "read the spec"));
     let got = core.collect("r1", "d1");
@@ -182,8 +182,8 @@ fn search_read_streams_only_the_answer_text_and_sizes_context_by_the_last_reques
     );
     assert_eq!(
         got.response["result"]["usage"],
-        // 施工 AG-12：输入照最后一次请求（2330 + 3208 是这时的上下文），输出三步加起来。
-        json!({"uncached": 2330, "cache_read": 3208, "cache_write": 0, "output": 110, "reasoning": 0})
+        // 施工 AG-13：记账三步加起来；上下文大小是最后一次请求的输入 2330 + 3208 加输出 25。
+        json!({"uncached": 7553, "cache_read": 5966, "cache_write": 0, "output": 110, "reasoning": 0, "context": 2330 + 3208 + 25})
     );
 }
 
@@ -224,7 +224,7 @@ fn two_calls_at_once_each_get_their_own_deltas() {
         );
         assert_eq!(
             collected.response["result"]["usage"],
-            json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1})
+            json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1, "context": 20})
         );
     }
     let records = core.records();

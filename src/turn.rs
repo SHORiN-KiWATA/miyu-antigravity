@@ -6,8 +6,8 @@
 //!   工具块（`turn/hosted.rs`）。MCP 服务转来的那一件调用（[`Turn::tool_call`]）记「MCP 那边到了」。**两边都到了**才交一块工具调用并结束这一次（回答照常是
 //!   用量，[`Fed::handed`] 带调用编号）：先后以流为准（它前面的正文都已读完），内容（名字、`arguments` 原文）以 MCP 那边为准。
 //!   只到了一边的，[`Turn::waiting`] 说在等哪一边，等多久由调用的人管（[`Turn::timeout`] 说到点了怎么办）。
-//! - `result`：`SUCCESS` 的回用量（这一次里各个 `agent_response DONE` 的 `usage`：输入、缓存命中照最后一个，输出、思考加起来，
-//!   施工 AG-12；一条都没有的不报）；不是成功的照
+//! - `result`：`SUCCESS` 的回用量（这一次里各个 `agent_response DONE` 的 `usage` 加起来，另报最后一个结束时的上下文大小
+//!   `context`，施工 AG-13；一条都没有的不报）；不是成功的照
 //!   [`failure`] 归类；正文就是拦截文案的回 `content_policy`（不管 `status`）。
 //! - `init.agent` 不是要的代理：当场结束，`unclassified`。
 
@@ -35,6 +35,8 @@ pub struct Turn {
     /// 开着的正文块：哪一步、第几块。
     open: Option<(u64, u64)>,
     usage: Option<Usage>,
+    /// 这一次里最后一个 `agent_response DONE` 的用量：上下文大小照它（施工 AG-13）。
+    last: Option<Usage>,
     delivered: bool,
     conversation: Option<String>,
     errors: Vec<String>,
@@ -87,6 +89,7 @@ impl Turn {
             next_block: 0,
             open: None,
             usage: None,
+            last: None,
             delivered: false,
             conversation: None,
             errors: Vec::new(),
@@ -259,7 +262,8 @@ impl Turn {
         fed.handed = Some(held.n);
     }
 
-    /// 回答：这一次各个 `agent_response DONE` 加起来的用量；一条都没有的是空的。
+    /// 回答：这一次各个 `agent_response DONE` 加起来的用量（记账），另报最后一次请求结束时的上下文大小（`context`，施工
+    /// AG-13）；一条都没有的是空的。
     fn usage_answer(&self) -> Value {
         match self.usage {
             Some(usage) => json!({"usage": {
@@ -268,6 +272,7 @@ impl Turn {
                 "cache_write": 0,
                 "output": usage.output,
                 "reasoning": usage.thinking,
+                "context": self.last.unwrap_or(usage).context(),
             }}),
             None => json!({}),
         }
@@ -295,7 +300,8 @@ impl Turn {
         }
         if done {
             if let Some(usage) = usage {
-                self.usage = Some(self.usage.map_or(usage, |sum| sum.then(usage)));
+                self.usage = Some(self.usage.map_or(usage, |sum| sum.plus(usage)));
+                self.last = Some(usage);
             }
             self.close_text(deltas);
         }

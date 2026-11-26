@@ -35,7 +35,7 @@ fn sha256(text: &str) -> String {
 
 /// 回应里的一条 usage（假 agy 每轮一样）。
 fn one_usage() -> Value {
-    json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1})
+    json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1, "context": 20})
 }
 
 #[test]

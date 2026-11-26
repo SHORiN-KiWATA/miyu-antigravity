@@ -68,7 +68,7 @@ fn a_search_is_a_hosted_tool_block_with_the_transcript_result_then_the_text() {
     succeeded(&got);
     assert_eq!(
         got.response["result"]["usage"],
-        json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1})
+        json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1, "context": 20})
     );
     assert!(
         !got.deltas

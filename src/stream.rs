@@ -55,16 +55,21 @@ pub struct Usage {
 }
 
 impl Usage {
-    /// 一轮里接着的下一次请求（施工 AG-12）：输入、缓存命中照后一次（那就是这时的上下文大小，核心拿它当上下文用了多少），
-    /// 输出、思考加起来。agy 跑自带工具时一轮里来回请求几次，每次都带整段上下文，输入加起来就虚高。
+    /// 两份加起来：一轮里几次请求的用量，记账照它（施工 AG-13）。上下文大小另报最后一次的（[`Usage::context`]）。
     #[must_use]
-    pub fn then(self, later: Usage) -> Usage {
+    pub fn plus(self, other: Usage) -> Usage {
         Usage {
-            input: later.input,
-            output: self.output + later.output,
-            thinking: self.thinking + later.thinking,
-            cache_read: later.cache_read,
+            input: self.input + other.input,
+            output: self.output + other.output,
+            thinking: self.thinking + other.thinking,
+            cache_read: self.cache_read + other.cache_read,
         }
+    }
+
+    /// 这一次请求结束时上下文多大：输入（含命中缓存的）加输出（施工 AG-13，核心 ACP-1 的 `usage.context`）。
+    #[must_use]
+    pub fn context(self) -> u64 {
+        self.input + self.cache_read + self.output
     }
 }
 
