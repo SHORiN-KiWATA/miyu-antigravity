@@ -20,11 +20,55 @@ pub const USER: &str = "User:\n";
 /// 历史里模型说的一条。
 pub const ASSISTANT: &str = "Assistant:\n";
 
-/// 历史里一次工具的结果。
-pub const TOOL_RESULT: &str = "[tool result]\n";
+/// 回复里出现了就从那里截掉的几段（施工 AG-14，`turn/forged.rs`）：以前的历史转写写工具的样子（`[called tool …]`、
+/// `[tool result]`、`[tool result, failed]`、`[provider tool …]`），转写的标签，和换行起头的「谁说的」标签。模型照转写的样子
+/// 编下一段时写的就是这些，不是给人的话。现在的转写不写工具了，前四样留着认还活着的、照以前转写开的 agy 对话。
+pub const REPLAY_MARKERS: [&str; 9] = [
+    "[called tool ",
+    "[tool result",
+    "[provider tool ",
+    "<conversation-history>",
+    "</conversation-history>",
+    "\nAssistant:\n",
+    "\nUser:\n",
+    "<this-turn>",
+    "</this-turn>",
+];
 
-/// 历史里一次工具的结果，工具报了错。
-pub const TOOL_FAILED: &str = "[tool result, failed]\n";
+/// 一轮做到一半新开对话时，这一轮已经做了的那一块的开头（施工 AG-14）：旁注的口吻，不写成对话。
+pub const THIS_TURN_OPEN: &str =
+    "<this-turn>\nWhat you already did in this turn, after the user's last message:\n";
+
+/// 那一块的结尾。
+pub const THIS_TURN_CLOSE: &str = "</this-turn>";
+
+/// 那一块里，她说过的一段话。
+#[must_use]
+pub fn you_said(text: &str) -> String {
+    format!("You said: {text}")
+}
+
+/// 那一块里，她调过的一件工具。
+#[must_use]
+pub fn you_called(name: &str, args: &str) -> String {
+    format!("You called the tool {name} with {args}.")
+}
+
+/// 那一块里，供应商替她跑的一件工具。
+#[must_use]
+pub fn provider_ran(name: &str, args: &str) -> String {
+    format!("The provider ran {name} with {args} for you.")
+}
+
+/// 那一块里，一件工具的结果。
+#[must_use]
+pub fn tool_returned(text: &str, failed: bool) -> String {
+    if failed {
+        format!("The tool failed: {text}")
+    } else {
+        format!("The tool returned: {text}")
+    }
+}
 
 /// 模型调过一次工具。
 #[must_use]

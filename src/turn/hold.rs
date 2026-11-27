@@ -26,6 +26,8 @@ pub(super) struct Hold {
     held: Option<Held>,
     /// 认出了拦截文案：它的开头一段（写进报错）。
     blocked: Option<String>,
+    /// 开头已经认过、交出去了：后面的字不再攒（交出去的字可能被照转写编的认法留着、还没开块，施工 AG-14）。
+    checked: bool,
 }
 
 /// 攒着的一步正文。
@@ -48,7 +50,7 @@ impl Turn {
             }
             return;
         }
-        if self.open.is_none() && self.next_block == 0 {
+        if self.open.is_none() && self.next_block == 0 && !self.hold.checked {
             let held = self.hold.held.get_or_insert_with(|| Held {
                 step,
                 pieces: Vec::new(),
@@ -65,6 +67,21 @@ impl Turn {
             }
             return;
         }
+        self.emit(step, &text, deltas);
+    }
+
+    /// 一步 `step` 的一段字过一道照转写编的认法（施工 AG-14，`forged.rs`），能交的交出去。
+    fn emit(&mut self, step: u64, text: &str, deltas: &mut Vec<Value>) {
+        self.text_step = step;
+        let out = self.forged.pass(text);
+        self.put(step, &out, deltas);
+    }
+
+    /// 交一段字：没开着正文块的先开一块（算一步 `step` 的）；空的什么都不做。
+    fn put(&mut self, step: u64, text: &str, deltas: &mut Vec<Value>) {
+        if text.is_empty() {
+            return;
+        }
         let index = if let Some((_, index)) = self.open {
             index
         } else {
@@ -75,21 +92,24 @@ impl Turn {
             deltas.push(json!({"start": {"index": index, "kind": "text"}}));
             index
         };
-        push_text(deltas, index, &text);
+        push_text(deltas, index, text);
     }
 
-    /// 攒着的不是拦截文案（或者不用再攒了）：开块，攒着的每一条照原样交；块留着开着，由后面照常收。
+    /// 过那一道时留着的字交出去（截过的不交）。
+    fn drain_forged(&mut self, deltas: &mut Vec<Value>) {
+        let rest = self.forged.drain();
+        let step = self.open.map_or(self.text_step, |(step, _)| step);
+        self.put(step, &rest, deltas);
+    }
+
+    /// 攒着的不是拦截文案（或者不用再攒了）：攒着的每一条照原样交（过一道照转写编的认法）；块留着开着，由后面照常收。
     pub(super) fn release_held(&mut self, deltas: &mut Vec<Value>) {
         let Some(held) = self.hold.held.take() else {
             return;
         };
-        let index = self.next_block;
-        self.next_block += 1;
-        self.open = Some((held.step, index));
-        self.delivered = true;
-        deltas.push(json!({"start": {"index": index, "kind": "text"}}));
+        self.hold.checked = true;
         for piece in &held.pieces {
-            push_text(deltas, index, piece);
+            self.emit(held.step, piece, deltas);
         }
     }
 
@@ -108,6 +128,7 @@ impl Turn {
     /// 收掉开着的正文块；攒着的先交出去。
     pub(super) fn close_text(&mut self, deltas: &mut Vec<Value>) {
         self.release_held(deltas);
+        self.drain_forged(deltas);
         if let Some((_, index)) = self.open.take() {
             deltas.push(json!({"end": {"index": index}}));
         }
@@ -117,6 +138,7 @@ impl Turn {
     pub fn flush(&mut self) -> Vec<Value> {
         let mut deltas = Vec::new();
         self.release_held(&mut deltas);
+        self.drain_forged(&mut deltas);
         deltas
     }
 

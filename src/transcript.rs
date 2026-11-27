@@ -1,8 +1,12 @@
 //! 把统一请求的 `messages` 整份转写成发给 agy 的一条文字（设计第五节「新开对话时的重放」）。纯函数。
 //!
-//! 格式照旧版 Miyu 的 `cli_relay/payload.rs`：一段说明加 `<conversation-history>`，里面照先后写 `User:`、`Assistant:`、
-//! `[called tool NAME with ARGS]`、`[tool result]`；最后一轮人说的话（结尾连着的几条 user 消息）单独成块跟在后面。只有这
-//! 一轮、没有历史的，直接发那几条的字。`request.tail` 有的接在最后。
+//! 格式照旧版 Miyu 的 `cli_relay/payload.rs`：一段说明加 `<conversation-history>`，里面照先后写 `User:`、`Assistant:` 和各自的字；
+//! 最后一轮人说的话（结尾连着的几条 user 消息）单独成块跟在后面。只有这一轮、没有历史的，直接发那几条的字。`request.tail` 有的
+//! 接在最后。
+//!
+//! 历史里不写工具（施工 AG-14）：她调过的工具、工具的结果、供应商侧工具都不进转写，只留人说的话和她说的话。以前照写成
+//! `[called tool NAME with ARGS]`、`[tool result]`，模型新开对话以后有时不真调工具，照这个样子写一段字当回复，发进了群里
+//! （2026-11-23 起主人的群里 22 次）。旧版 Miyu 的工具循环在 agy 里头，它的历史本来就只有字，这样写的转写里没有工具那几行。
 //!
 //! 接在活着的 agy 对话上的新的一轮只发新的那几条（[`new_turn`]），一条一段。
 //!
@@ -62,25 +66,45 @@ pub fn transcribe(request: &Value, budget: usize) -> Result<String, BadRequest> 
     if history.is_empty() {
         return Ok(last);
     }
+    // 一轮做到一半新开的对话（历史以工具的结果、调工具的回复结束；她挂着工具调用时 agy 先说了话就是这样）：这一轮已经做了的
+    // （历史里最后一条人说的话以后的：调过的工具、拿到的结果、说过的话）写成一块旁注接在最后一轮前面，不写成对话（施工
+    // AG-14），不然她又调一遍。以说话结束的那一轮已经答完了，照历史写。
+    let in_progress = history
+        .last()
+        .is_some_and(|message| matches!(message.role, Role::Tool { .. }) || message.tooled);
+    let current_from = if in_progress {
+        history
+            .iter()
+            .rposition(|message| message.role == Role::User)
+            .map_or(0, |index| index + 1)
+    } else {
+        history.len()
+    };
+    let (earlier, current) = history.split_at(current_from);
+    if let Some(done) = this_turn(current) {
+        last = format!("{done}\n\n{last}");
+    }
 
-    let lines: Vec<String> = history.iter().map(Message::history_line).collect();
+    let lines: Vec<(Role, String)> = earlier
+        .iter()
+        .filter_map(|message| Some((message.role, message.history_line()?)))
+        .collect();
+    if lines.is_empty() {
+        return Ok(last);
+    }
     let fixed = words::HISTORY_HEAD.len() + words::HISTORY_FOOT.len() + 2 + last.len();
-    let whole: usize = lines.iter().map(String::len).sum();
+    let whole: usize = lines.iter().map(|(_, line)| line.len()).sum();
     let keep_from = if fixed + whole <= budget {
         0
     } else {
-        oldest_kept(
-            &lines,
-            history,
-            budget.saturating_sub(fixed + words::OMITTED.len()),
-        )
+        oldest_kept(&lines, budget.saturating_sub(fixed + words::OMITTED.len()))
     };
 
     let mut text = String::from(words::HISTORY_HEAD);
     if keep_from > 0 {
         text.push_str(words::OMITTED);
     }
-    for line in &lines[keep_from..] {
+    for (_, line) in &lines[keep_from..] {
         text.push_str(line);
     }
     text.push_str(words::HISTORY_FOOT);
@@ -185,21 +209,21 @@ struct Known<'a> {
     saved: BTreeMap<&'a str, &'a str>,
 }
 
-/// 历史从哪一条起留：从最新往回加，放不下 `room` 就停；再往后挪到下一条 user 消息，让转写从一轮的开头起（截在回复、工具
-/// 结果中间会让模型把半截旧回复当上文）。一条都放不下的交 `lines.len()`。
-fn oldest_kept(lines: &[String], history: &[Message], room: usize) -> usize {
+/// 历史从哪一行起留：从最新往回加，放不下 `room` 就停；再往后挪到下一条 user 消息，让转写从一轮的开头起（截在回复中间会让
+/// 模型把半截旧回复当上文）。一行都放不下的交 `lines.len()`。
+fn oldest_kept(lines: &[(Role, String)], room: usize) -> usize {
     let mut used = 0;
     let mut keep_from = lines.len();
-    for (index, line) in lines.iter().enumerate().rev() {
+    for (index, (_, line)) in lines.iter().enumerate().rev() {
         if used + line.len() > room {
             break;
         }
         used += line.len();
         keep_from = index;
     }
-    history[keep_from..]
+    lines[keep_from..]
         .iter()
-        .position(|message| message.role == Role::User)
+        .position(|(role, _)| *role == Role::User)
         .map_or(lines.len(), |offset| keep_from + offset)
 }
 
@@ -210,10 +234,14 @@ enum Role {
     Tool { failed: bool },
 }
 
-/// 一条消息：谁说的，块转成的字（块之间换行）。
+/// 一条消息：谁说的，块转成的字（块之间换行），进历史转写的字（不写工具的块，施工 AG-14），写进这一轮旁注的字。
 struct Message {
     role: Role,
     body: String,
+    spoken: String,
+    steps: String,
+    /// 有工具的块。
+    tooled: bool,
 }
 
 impl Message {
@@ -234,23 +262,96 @@ impl Message {
             .get("blocks")
             .and_then(Value::as_array)
             .ok_or_else(|| BadRequest("a message has no blocks array".into()))?;
-        let body = blocks
-            .iter()
-            .filter_map(|block| block_text(block, known))
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok(Message { role, body })
+        let text = |keep: &dyn Fn(&Value) -> bool| {
+            blocks
+                .iter()
+                .filter(|block| keep(block))
+                .filter_map(|block| block_text(block, known))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let body = text(&|_| true);
+        let spoken = text(&|block| !is_tool(block));
+        let steps = match role {
+            Role::Tool { failed } if !body.is_empty() => words::tool_returned(&body, failed),
+            Role::Tool { .. } => String::new(),
+            _ => blocks
+                .iter()
+                .filter_map(|block| step_text(block, known))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        Ok(Message {
+            role,
+            body,
+            spoken,
+            steps,
+            tooled: blocks.iter().any(is_tool),
+        })
     }
 
-    fn history_line(&self) -> String {
+    /// 历史转写里的一段；不写的（工具的结果，只调了工具、没说话的回复）是 `None`（施工 AG-14）。
+    fn history_line(&self) -> Option<String> {
         let label = match self.role {
             Role::User => words::USER,
             Role::Assistant => words::ASSISTANT,
-            Role::Tool { failed: false } => words::TOOL_RESULT,
-            Role::Tool { failed: true } => words::TOOL_FAILED,
+            Role::Tool { .. } => return None,
         };
-        format!("{label}{}\n\n", self.body)
+        // 她以前漏进群里的、照转写编的那几条，标记起的那一截不写（施工 AG-14）。
+        let spoken = match self.role {
+            Role::Assistant => crate::turn::forged::before_marker(&self.spoken),
+            _ => self.spoken.as_str(),
+        };
+        (!spoken.is_empty()).then(|| format!("{label}{spoken}\n\n"))
     }
+}
+
+/// 这一轮已经做了的那一块（施工 AG-14）；什么都没做的没有。
+fn this_turn(current: &[Message]) -> Option<String> {
+    let steps: Vec<&str> = current
+        .iter()
+        .map(|message| message.steps.as_str())
+        .filter(|steps| !steps.is_empty())
+        .collect();
+    (!steps.is_empty()).then(|| {
+        format!(
+            "{}{}\n{}",
+            words::THIS_TURN_OPEN,
+            steps.join("\n"),
+            words::THIS_TURN_CLOSE
+        )
+    })
+}
+
+/// 这一轮旁注里的一块：她说的话、调的工具、供应商替她跑的工具照旁注的口吻写，别的照 [`block_text`]。
+fn step_text(block: &Value, known: &Known<'_>) -> Option<String> {
+    let field = |key: &str| block.get(key).and_then(Value::as_str).unwrap_or_default();
+    match block.get("type").and_then(Value::as_str)? {
+        "text" => block_text(block, known).map(|text| words::you_said(&text)),
+        "tool_call" => Some(words::you_called(field("name"), field("args"))),
+        "hosted_tool" => {
+            let mut text = words::provider_ran(field("name"), field("args"));
+            if let Some(outcome) = block.get("outcome") {
+                let failed = outcome.get("failed").and_then(Value::as_bool) == Some(true);
+                let said = outcome
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                text.push('\n');
+                text.push_str(&words::tool_returned(said, failed));
+            }
+            Some(text)
+        }
+        _ => block_text(block, known),
+    }
+}
+
+/// 是工具的块：她调的工具、供应商侧工具。历史转写里不写（施工 AG-14）。
+fn is_tool(block: &Value) -> bool {
+    matches!(
+        block.get("type").and_then(Value::as_str),
+        Some("tool_call" | "hosted_tool")
+    )
 }
 
 /// 一块转成的字；不写的（思考、空的字、不认识的块）是 `None`。

@@ -1,7 +1,8 @@
 //! 一轮 agy 的流 → `driver.delta` 的增量和 `driver.call` 的回答（设计第四节第 4、5 条，第八节）。纯的状态机，不碰 I/O。
 //!
 //! - `agent_response` 的 `text_delta`：一步第一次有字时开一块正文（`start {kind: "text"}`），之后交字；这一步 `DONE` 时收块；
-//!   下一个 `agent_response` 步另开一块；没有字的步不开块。一轮里第一段正文的开头先攒着认内容策略拦截（`turn/hold.rs`）。
+//!   下一个 `agent_response` 步另开一块；没有字的步不开块。一轮里第一段正文的开头先攒着认内容策略拦截（`turn/hold.rs`）；
+//!   交出去之前过一道，照历史转写的样子编出来的那一截截掉（`turn/forged.rs`，施工 AG-14）。
 //! - 工具步骤：名字以 [`MCP_PREFIX`] 开头、状态是 `ACTIVE` 的，记「流这边到了」；别的工具步（agy 自己跑了的）照实交成供应商侧
 //!   工具块（`turn/hosted.rs`）。MCP 服务转来的那一件调用（[`Turn::tool_call`]）记「MCP 那边到了」。**两边都到了**才交一块工具调用并结束这一次（回答照常是
 //!   用量，[`Fed::handed`] 带调用编号）：先后以流为准（它前面的正文都已读完），内容（名字、`arguments` 原文）以 MCP 那边为准。
@@ -16,6 +17,7 @@ use serde_json::{Value, json};
 use crate::failure::{self, Class};
 use crate::stream::{Event, ToolState, Usage};
 
+pub(crate) mod forged;
 mod hold;
 mod hosted;
 
@@ -48,6 +50,10 @@ pub struct Turn {
     handed: bool,
     /// 攒着的正文开头、认出的拦截文案。
     hold: hold::Hold,
+    /// 照转写编出来的那一截（施工 AG-14）。
+    forged: forged::Forged,
+    /// 最近一段正文是哪一步的：留着没交的字交出去时开块用。
+    text_step: u64,
     /// 开着的供应商侧工具块。
     hosting: hosted::Hosting,
 }
@@ -97,8 +103,15 @@ impl Turn {
             mcp: None,
             handed: false,
             hold: hold::Hold::default(),
+            forged: forged::Forged::default(),
+            text_step: 0,
             hosting: hosted::Hosting::default(),
         }
+    }
+
+    /// 刚截掉的、照转写编出来的那一截的开头（施工 AG-14），给调用的人写日志；拿过一次就没了。
+    pub fn take_cut(&mut self) -> Option<String> {
+        self.forged.take_cut()
     }
 
     /// agy 这段对话的编号（`init` 或 `result` 里的）。
@@ -289,11 +302,8 @@ impl Turn {
     ) {
         self.close_hosted(deltas);
         self.leave_held_step(step_index, deltas);
-        if let Some((step, index)) = self.open
-            && step != step_index
-        {
-            deltas.push(json!({"end": {"index": index}}));
-            self.open = None;
+        if self.open.is_some_and(|(step, _)| step != step_index) {
+            self.close_text(deltas);
         }
         if let Some(text) = text.filter(|text| !text.is_empty()) {
             self.text(step_index, text, deltas);

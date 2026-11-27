@@ -41,6 +41,8 @@ fn history_is_wrapped_and_the_last_turn_follows_it() {
     );
 }
 
+/// 历史里不写工具（施工 AG-14）：她调的工具、工具的结果、供应商侧工具都不进转写；只调了工具、没说话的回复整条不写。以前照写，
+/// 模型照这个样子编了一段字当回复（`[called tool …]`、`[tool result]`）。
 #[test]
 fn tool_calls_results_and_reasoning() {
     let messages = vec![
@@ -59,6 +61,7 @@ fn tool_calls_results_and_reasoning() {
              "outcome": {"text": "boom", "failed": true}},
             {"type": "hosted_tool", "call_id": "c_5", "name": "search_web", "args": "{}"}
         ]}),
+        assistant("Found them."),
         user("thanks"),
     ];
     let got = transcribe(&request(&messages), BUDGET).unwrap();
@@ -70,14 +73,14 @@ fn tool_calls_results_and_reasoning() {
         .unwrap();
     assert_eq!(
         body,
-        "User:\nlist files\n\n\
-         Assistant:\nLet me look.\n[called tool ls with {\"path\":\".\"}]\n\n\
-         [tool result]\na.txt\n\n\
-         [tool result, failed]\ndenied\n\n\
-         Assistant:\n[provider tool search_web with {\"query\":\"rust\"}]\n[provider tool result]\n1. Rust https://www.rust-lang.org\n\
-         [provider tool search_web with {}]\n[provider tool failed]\nboom\n\
-         [provider tool search_web with {}]\n\n"
+        "User:\nlist files\n\nAssistant:\nLet me look.\n\nAssistant:\nFound them.\n\n"
     );
+    for marker in words::REPLAY_MARKERS
+        .iter()
+        .filter(|marker| marker.starts_with('['))
+    {
+        assert!(!got.contains(marker), "不写 {marker}");
+    }
 }
 
 #[test]
@@ -126,10 +129,17 @@ fn a_trailing_tool_result_asks_to_continue() {
         json!({"role": "tool", "call_id": "c_1", "error": false, "blocks": [{"type": "text", "text": "x"}]}),
     ];
     let got = transcribe(&request(&messages), BUDGET).unwrap();
-    assert!(got.ends_with(&format!(
-        "[tool result]\nx\n\n</conversation-history>\n\n{}",
-        words::CONTINUE
-    )));
+    // 这一轮做到一半（以工具的结果结束）：做过的写在这一轮的旁注里，不写成对话（施工 AG-14）。
+    assert_eq!(
+        got,
+        format!(
+            "{}User:\nq\n\n</conversation-history>\n\n<this-turn>\n\
+             What you already did in this turn, after the user's last message:\n\
+             You called the tool ls with {{}}.\nThe tool returned: x\n</this-turn>\n\n{}",
+            words::HISTORY_HEAD,
+            words::CONTINUE
+        )
+    );
 }
 
 #[test]
@@ -221,4 +231,26 @@ fn a_new_turn_without_text_asks_to_continue() {
     ]);
     assert_eq!(new_turn(&req, 2).unwrap(), [words::CONTINUE]);
     assert!(new_turn(&json!({"messages": 3}), 0).is_err());
+}
+
+/// 她以前漏进群里的那几条（照以前的转写编的工具调用）留在历史里：重放时标记起的那一截不写，只剩标记前面的话，整条都是的不写
+/// （施工 AG-14）。
+#[test]
+fn old_replies_that_copied_the_transcript_are_cut_in_the_history() {
+    let messages = vec![
+        user("q1"),
+        assistant(
+            "[called tool qq_quote with {\"msg\":\"1\"}]\n\n[tool result]\nYour next message will quote it.\n",
+        ),
+        user("q2"),
+        assistant("在窥屏呢\n\n[tool result]\nok"),
+        user("q3"),
+    ];
+    let got = transcribe(&request(&messages), BUDGET).unwrap();
+    assert!(!got.contains("[called tool"), "{got}");
+    assert!(!got.contains("[tool result"), "{got}");
+    assert!(
+        got.contains("User:\nq1\n\nUser:\nq2\n\nAssistant:\n在窥屏呢\n\n"),
+        "{got}"
+    );
 }
