@@ -221,6 +221,11 @@ fn listen(
                             source.fill(call, turn, step);
                         }
                         let fed = turn.feed(event);
+                        if let Some(cut) = turn.take_cut() {
+                            eprintln!(
+                                "call {call}: cut the reply where it copies the history transcript: {cut:?}"
+                            );
+                        }
                         if let Some(conversation) = turn.conversation() {
                             source.live.note_conversation(conversation);
                         }

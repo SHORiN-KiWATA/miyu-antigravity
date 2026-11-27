@@ -93,6 +93,7 @@ fn pong_streams_text_and_usage_and_cleans_up() {
             "--output-format",
             "stream-json",
             "--dangerously-skip-permissions",
+            "--disable-slash-commands",
             "--model",
             "gemini-3.8-flash-low",
             "--agent",

@@ -7,8 +7,9 @@ use crate::tool_rig::{
     mcp_pid, record_other_than, stdin_text, text_blocks, tool_request, wait_records, with_result,
 };
 
-const CALLED: &str = r#"[called tool bash with {"command":"ls -l","n":2}]"#;
-const CALLED_LS: &str = r#"[called tool bash with {"command":"ls"}]"#;
+// 这一轮做到一半新开的对话，做过的写在这一轮的旁注里，不写成对话（施工 AG-14）。
+const CALLED: &str = r#"You called the tool bash with {"command":"ls -l","n":2}."#;
+const CALLED_LS: &str = r#"You called the tool bash with {"command":"ls"}."#;
 
 /// 第一次调用交回一件工具调用，挂着；交出请求、交回的、agy 进程号、会话编号、MCP 服务进程号。
 fn hang(core: &mut Core) -> (Value, crate::support::Collected, i64, String, i64) {
@@ -29,13 +30,18 @@ fn assert_old_gone(core: &Core, pid: i64, conversation: &str, mcp: i64) {
     assert_conversation_removed(&core.home, conversation);
 }
 
-/// 新起的 agy 收到的是整份重放，里面有那件工具调用和它的结果。
+/// 新起的 agy 收到的是整份重放，这一轮的旁注里有那件工具调用和它的结果。
 fn assert_replayed(core: &Core, old: i64, called: &str, result: &str) -> Value {
     let record = record_other_than(core, old);
     let text = stdin_text(&record, 0);
     assert!(text.contains("<conversation-history>"), "{text}");
     assert!(text.contains(called), "{text}");
-    assert!(text.contains(&format!("[tool result]\n{result}")), "{text}");
+    assert!(text.contains("<this-turn>"), "{text}");
+    assert!(
+        text.contains(&format!("The tool returned: {result}")),
+        "{text}"
+    );
+    assert!(!text.contains("[called tool"), "{text}");
     record
 }
 
@@ -91,7 +97,7 @@ fn a_wrong_number_or_call_id_discards_the_pending_agy_and_replays() {
         assert_old_gone(&core, pid, &conversation, mcp);
         let record = record_other_than(&core, pid);
         let text = stdin_text(&record, 0);
-        assert!(text.contains("[tool result]\nfile-a"), "{name}: {text}");
+        assert!(text.contains("The tool returned: file-a"), "{name}: {text}");
         assert!(
             text.ends_with("Continue from where the conversation above left off."),
             "{name}: {text}"

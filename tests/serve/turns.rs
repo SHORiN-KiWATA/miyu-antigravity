@@ -171,7 +171,8 @@ fn a_tool_message_in_the_next_turn_starts_a_new_agy() {
     );
     messages.push(json!({"role": "user", "blocks": [{"type": "text", "text": "thanks"}]}));
     core.call("r2", "d2", &second);
-    assert_eq!(core.collect("r2", "d2").text(), "echo: ory>\n\nthanks");
+    // 替身照最后几个字回话：这一轮做到一半，最后一轮前面是这一轮的旁注（施工 AG-14）。
+    assert_eq!(core.collect("r2", "d2").text(), "echo: urn>\n\nthanks");
     let records = core.records();
     assert_eq!(records.len(), 2, "夹着工具结果：新开");
     assert_eq!(
@@ -185,9 +186,10 @@ fn a_tool_message_in_the_next_turn_starts_a_new_agy() {
         .unwrap();
     let text = &texts(&lines(replayed)[0])[0];
     assert!(
-        text.contains("[called tool read with {\"path\":\"a.txt\"}]")
-            && text.contains("[tool result]\nfile body"),
-        "整份重放里有那次工具调用和结果：{text}"
+        text.contains("You called the tool read with {\"path\":\"a.txt\"}.")
+            && text.contains("The tool returned: file body")
+            && !text.contains("[called tool"),
+        "整份重放里这一轮的旁注有那次工具调用和结果（施工 AG-14）：{text}"
     );
 }
 
