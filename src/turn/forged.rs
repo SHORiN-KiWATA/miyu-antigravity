@@ -8,7 +8,7 @@
 //! 一边收一边认：标记可能被拆在两条 `text_delta` 里，末尾还可能是标记开头的那几个字先留着，看清了再交。回复的开头当成一行的
 //! 开头（`Assistant:` 写在最前面的也认）。截了以后这一轮的字都不交，工具调用照常。
 
-use crate::words::REPLAY_MARKERS;
+use crate::words::{AGY_MARKERS, REPLAY_MARKERS};
 
 /// 认标记的状态。
 #[derive(Debug, Default)]
@@ -30,6 +30,7 @@ impl Forged {
             return String::new();
         }
         self.pending.push_str(text);
+        strip(&mut self.pending);
         // 回复的开头当成一行的开头：前面垫一个换行再找，交出去的字里不带它。
         let lead = usize::from(!self.started);
         let hay = if self.started {
@@ -50,7 +51,9 @@ impl Forged {
             self.started |= !kept.is_empty();
             return kept;
         }
-        let hold = held_back(&hay).saturating_sub(lead);
+        let hold = held_back(&hay)
+            .saturating_sub(lead)
+            .max(held_back_agy(&self.pending));
         let split = floor_boundary(
             &self.pending,
             self.pending.len() - hold.min(self.pending.len()),
@@ -67,6 +70,7 @@ impl Forged {
             self.pending.clear();
             return String::new();
         }
+        strip(&mut self.pending);
         self.started |= !self.pending.is_empty();
         std::mem::take(&mut self.pending)
     }
@@ -83,16 +87,48 @@ impl Forged {
 
 /// 一整段字从第一个标记起截掉以后剩的（去掉末尾空白）；没有标记的原样。历史转写里她以前的回复照它（施工 AG-14）：以前漏进群里的
 /// 那几条留在了历史里，照原样重放又是一份照抄的样子。回复的开头当成一行的开头，同 [`Forged::pass`]。
-pub(crate) fn before_marker(text: &str) -> &str {
+pub(crate) fn before_marker(text: &str) -> String {
+    let mut text = text.to_string();
+    strip(&mut text);
     let hay = format!("\n{text}");
-    match REPLAY_MARKERS
+    let kept = match REPLAY_MARKERS
         .iter()
         .filter_map(|marker| hay.find(marker))
         .min()
     {
         Some(at) => text[..at.saturating_sub(1).min(text.len())].trim_end(),
-        None => text,
+        None => text.trim_end(),
+    };
+    kept.to_string()
+}
+
+/// 删掉 agy 自己的控制标记（[`AGY_MARKERS`]，AG-14 补），连同紧挨在它前面的空格。根治在起 agy 时关掉斜杠命令（`agy.rs`），
+/// 这里是最后一道。
+fn strip(text: &mut String) {
+    for marker in AGY_MARKERS {
+        while let Some(at) = text.find(marker) {
+            let start = text[..at].trim_end_matches(' ').len();
+            text.replace_range(start..at + marker.len(), "");
+        }
     }
+}
+
+/// `text` 的末尾有多少字节可能是 agy 控制标记的开头（标记本身没写全），连同它前面的空格。
+fn held_back_agy(text: &str) -> usize {
+    let tail = AGY_MARKERS
+        .iter()
+        .flat_map(|marker| {
+            (1..marker.len())
+                .filter(|&n| marker.is_char_boundary(n))
+                .filter(|&n| text.ends_with(&marker[..n]))
+        })
+        .max()
+        .unwrap_or(0);
+    if tail == 0 {
+        return 0;
+    }
+    let before = &text[..text.len() - tail];
+    tail + (before.len() - before.trim_end_matches(' ').len())
 }
 
 /// `text` 的末尾有多少字节可能是一个标记的开头（标记本身没写全）。

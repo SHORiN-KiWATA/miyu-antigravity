@@ -12,6 +12,10 @@ use crate::config::Config;
 pub const PRINT_TIMEOUT: &str = "86400s";
 
 /// 一问一答的参数：模型 `model`、代理 `agent`、`--add-dir` 给 `dir`。
+///
+/// 带 `--disable-slash-commands`（AG-14 补，2026-11-27）：交给 agy 的是 Miyu 拼好的对话，不是人在 agy 里打的命令，里面的
+/// `/goal`、`/plan` 这类斜杠命令和技能不该被 agy 展开。主人群里有人发了「@Miyu /goal …」，agy 把它当成自己的目标模式：
+/// 不写 `<!-- GOAL_COMPLETE -->` 就逼着接着干，她此后每句后面都带这一段，发进了群里；那一句留在历史里，重放时又触发。
 #[must_use]
 pub fn chat_args(model: &str, agent: &str, dir: &Path) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
@@ -21,6 +25,7 @@ pub fn chat_args(model: &str, agent: &str, dir: &Path) -> Vec<OsString> {
         "--output-format",
         "stream-json",
         "--dangerously-skip-permissions",
+        "--disable-slash-commands",
         "--model",
         model,
         "--agent",

@@ -19,6 +19,7 @@ fn chat_args_are_the_design_line_word_for_word() {
             "--output-format",
             "stream-json",
             "--dangerously-skip-permissions",
+            "--disable-slash-commands",
             "--model",
             "gemini-3.8-flash-low",
             "--agent",

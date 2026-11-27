@@ -89,3 +89,23 @@ fn a_whole_old_reply_is_cut_at_its_first_marker() {
     assert_eq!(before_marker("Assistant:\n编的"), "");
     assert_eq!(before_marker("正常的一句 [图]"), "正常的一句 [图]");
 }
+
+/// agy 自己的控制标记（AG-14 补，根治在 `agy.rs` 关掉斜杠命令，这里是最后一道）：只删标记和它前面的空格，前后的话照交；
+/// 标记拆在几段里也删；整条只有它的什么都不交；别的 HTML 注释不动。2026-11-27 主人群里的原样。
+#[test]
+fn agy_control_markers_are_dropped_and_the_words_kept() {
+    let (out, cut) = through(&["你当这是跑agent呢，想得美 <!-- GOAL_COMPLETE -->\n"]);
+    assert_eq!((out.as_str(), cut), ("你当这是跑agent呢，想得美\n", None));
+    let (out, _) = through(&["美得你 <!-- GOAL", "_COMPL", "ETE -->"]);
+    assert_eq!(out, "美得你");
+    let (out, _) = through(&["<!-- GOAL_COMPLETE -->"]);
+    assert_eq!(out, "");
+    let (out, _) = through(&["算了 <!-- GOAL_CANCELLED -->"]);
+    assert_eq!(out, "算了");
+    let (out, _) = through(&["<!-- 注释 --> 照留"]);
+    assert_eq!(out, "<!-- 注释 --> 照留");
+    assert_eq!(
+        before_marker("突然这么正经 <!-- GOAL_COMPLETE -->\n"),
+        "突然这么正经"
+    );
+}

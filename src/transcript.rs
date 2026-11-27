@@ -300,7 +300,7 @@ impl Message {
         // 她以前漏进群里的、照转写编的那几条，标记起的那一截不写（施工 AG-14）。
         let spoken = match self.role {
             Role::Assistant => crate::turn::forged::before_marker(&self.spoken),
-            _ => self.spoken.as_str(),
+            _ => self.spoken.clone(),
         };
         (!spoken.is_empty()).then(|| format!("{label}{spoken}\n\n"))
     }

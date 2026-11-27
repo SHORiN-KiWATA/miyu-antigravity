@@ -35,6 +35,11 @@ pub const REPLAY_MARKERS: [&str; 9] = [
     "</this-turn>",
 ];
 
+/// agy 自己的控制标记（AG-14 补，2026-11-27）：模型照 agy 的指令在回复末尾写的「这件事做完了、取消了」，不是给人的话。回复里
+/// 出现了就删掉这一段，前后的照交；历史转写里她以前的回复也删掉。2026-11-27 22:27 起主人群里她每句后面都带
+/// `<!-- GOAL_COMPLETE -->`，只剩它的那两条发成了 `-- GOAL_COMPLETE -->`。其余 `<!-- … -->` 不动：写代码时注释是真内容。
+pub const AGY_MARKERS: [&str; 2] = ["<!-- GOAL_COMPLETE -->", "<!-- GOAL_CANCELLED -->"];
+
 /// 一轮做到一半新开对话时，这一轮已经做了的那一块的开头（施工 AG-14）：旁注的口吻，不写成对话。
 pub const THIS_TURN_OPEN: &str =
     "<this-turn>\nWhat you already did in this turn, after the user's last message:\n";
