@@ -19,6 +19,11 @@ fn hosted_start(index: u64) -> Value {
     json!({"start": {"index": index, "kind": {"hosted_tool": {"name": "search_web"}}}})
 }
 
+/// 开块以后紧跟的私有数据（施工 AG-16）。
+fn mark(index: u64) -> Value {
+    json!({"private": {"index": index, "data": {"hosted": true}}})
+}
+
 fn params(index: u64) -> Value {
     json!({"text": {"index": index, "text": PARAMS}})
 }
@@ -62,7 +67,13 @@ fn run(name: &str, mode: &str, text: &str) -> (Core, Collected) {
 #[test]
 fn a_search_is_a_hosted_tool_block_with_the_transcript_result_then_the_text() {
     let (_core, got) = run("h-search", "plan:search", "search for it");
-    let mut expected = vec![hosted_start(0), params(0), outcome(0, FOUND), end(0)];
+    let mut expected = vec![
+        hosted_start(0),
+        mark(0),
+        params(0),
+        outcome(0, FOUND),
+        end(0),
+    ];
     expected.extend(text_block(1, &["Found it."]));
     assert_eq!(got.deltas, expected);
     succeeded(&got);
@@ -70,12 +81,7 @@ fn a_search_is_a_hosted_tool_block_with_the_transcript_result_then_the_text() {
         got.response["result"]["usage"],
         json!({"uncached": 10, "cache_read": 7, "cache_write": 0, "output": 3, "reasoning": 1, "context": 20})
     );
-    assert!(
-        !got.deltas
-            .iter()
-            .any(|delta| delta.get("private").is_some()),
-        "供应商侧工具不带私有数据"
-    );
+    // 供应商侧工具带一份私有数据（施工 AG-16，上面的 `mark(0)`）：核心照它认出是这一家的块，不换成 `<hosted-tool>` 的字。
 }
 
 /// 正文、供应商侧工具块、正文混在一次里：块先后和 `index` 一块接一块。
@@ -83,7 +89,13 @@ fn a_search_is_a_hosted_tool_block_with_the_transcript_result_then_the_text() {
 fn text_a_hosted_block_and_more_text_keep_their_order_and_indexes() {
     let (_core, got) = run("h-between", "plan:search-between", "search for it");
     let mut expected = text_block(0, &["Let me search. "]);
-    expected.extend([hosted_start(1), params(1), outcome(1, FOUND), end(1)]);
+    expected.extend([
+        hosted_start(1),
+        mark(1),
+        params(1),
+        outcome(1, FOUND),
+        end(1),
+    ]);
     expected.extend(text_block(2, &["Found it."]));
     assert_eq!(got.deltas, expected);
     succeeded(&got);
@@ -94,8 +106,14 @@ fn text_a_hosted_block_and_more_text_keep_their_order_and_indexes() {
 fn a_transcript_row_written_300_ms_late_is_still_read() {
     let (_core, got) = run("h-late", "plan:search-late", "search for it");
     assert_eq!(
-        got.deltas[..4],
-        [hosted_start(0), params(0), outcome(0, FOUND), end(0)]
+        got.deltas[..5],
+        [
+            hosted_start(0),
+            mark(0),
+            params(0),
+            outcome(0, FOUND),
+            end(0)
+        ]
     );
     succeeded(&got);
 }
@@ -109,7 +127,7 @@ fn a_transcript_that_never_gets_the_row_gives_the_block_without_a_result_and_no_
         started.elapsed() >= Duration::from_millis(900),
         "要等够 1 秒才放弃"
     );
-    let mut expected = vec![hosted_start(0), params(0), end(0)];
+    let mut expected = vec![hosted_start(0), mark(0), params(0), end(0)];
     expected.extend(text_block(1, &["Found it."]));
     assert_eq!(got.deltas, expected);
     succeeded(&got);
@@ -120,9 +138,10 @@ fn a_transcript_that_never_gets_the_row_gives_the_block_without_a_result_and_no_
 fn a_done_with_output_uses_the_stream_and_not_the_transcript() {
     let (_core, got) = run("h-output", "plan:search-output", "search for it");
     assert_eq!(
-        got.deltas[..4],
+        got.deltas[..5],
         [
             hosted_start(0),
+            mark(0),
             params(0),
             outcome(0, "from the stream"),
             end(0)
@@ -136,9 +155,10 @@ fn a_done_with_output_uses_the_stream_and_not_the_transcript() {
 fn an_error_step_is_a_failed_outcome_with_the_streams_words() {
     let (_core, got) = run("h-error", "plan:search-error", "search for it");
     assert_eq!(
-        got.deltas[..4],
+        got.deltas[..5],
         [
             hosted_start(0),
+            mark(0),
             params(0),
             json!({"outcome": {"index": 0, "text": "search backend failed", "failed": true}}),
             end(0)
@@ -152,8 +172,14 @@ fn an_error_step_is_a_failed_outcome_with_the_streams_words() {
 fn a_step_that_comes_as_done_alone_is_a_block_too() {
     let (_core, got) = run("h-done-only", "plan:search-done-only", "search for it");
     assert_eq!(
-        got.deltas[..4],
-        [hosted_start(0), params(0), outcome(0, FOUND), end(0)]
+        got.deltas[..5],
+        [
+            hosted_start(0),
+            mark(0),
+            params(0),
+            outcome(0, FOUND),
+            end(0)
+        ]
     );
     succeeded(&got);
 }
@@ -205,6 +231,7 @@ fn a_search_then_a_miyu_tool_call_hands_back_with_indexes_0_and_1_and_the_result
         one.deltas,
         vec![
             hosted_start(0),
+            mark(0),
             params(0),
             outcome(0, FOUND),
             end(0),
@@ -246,7 +273,13 @@ fn a_search_in_a_reused_process_reads_the_transcript_by_the_kept_conversation_id
     let second = next_turn(&first, "echo: hello", &["now search"]);
     core.call("r2", "d2", &second);
     let two = core.collect("r2", "d2");
-    let mut expected = vec![hosted_start(0), params(0), outcome(0, FOUND), end(0)];
+    let mut expected = vec![
+        hosted_start(0),
+        mark(0),
+        params(0),
+        outcome(0, FOUND),
+        end(0),
+    ];
     expected.extend(text_block(1, &["Found it."]));
     assert_eq!(two.deltas, expected);
     succeeded(&two);
@@ -260,7 +293,7 @@ fn a_search_in_a_reused_process_reads_the_transcript_by_the_kept_conversation_id
 #[test]
 fn a_result_over_64_kib_is_cut_on_a_char_boundary() {
     let (_core, got) = run("h-big", "plan:search-big", "search for it");
-    let sent = got.deltas[2]["outcome"]["text"].as_str().unwrap();
+    let sent = got.deltas[3]["outcome"]["text"].as_str().unwrap();
     assert_eq!(sent.len(), 65535, "65538 字节的结果退到字边界");
     assert_eq!(sent, "字".repeat(21845));
     assert!(got.line_lengths.iter().all(|length| *length < 1 << 20));

@@ -222,12 +222,13 @@ fn a_held_start_is_delivered_before_a_tool_block_and_before_the_hand_back() {
     turn.feed(text(1, false, "The prompt"));
     let deltas = turn.feed(tool("search_web")).deltas;
     assert_eq!(
-        deltas[..4],
+        deltas[..5],
         [
             opened(0),
             piece(0, "The prompt"),
             json!({"end": {"index": 0}}),
             json!({"start": {"index": 1, "kind": {"hosted_tool": {"name": "search_web"}}}}),
+            json!({"private": {"index": 1, "data": {"hosted": true}}}),
         ]
     );
     let mut turn = Turn::new("a");

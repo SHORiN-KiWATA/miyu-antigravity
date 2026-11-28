@@ -3,7 +3,10 @@
 //! - 头一次见到这一步（`ACTIVE`；没见过 `ACTIVE` 直接来了 `DONE`、`ERROR` 的也算）：先收掉开着的正文块，`start {kind:
 //!   {"hosted_tool": {"name": 流里的名字原样}}}`，再把 `parameters` 的 JSON 原文交成 `text`（没有的不交）。
 //! - `DONE`：有结果的交 `outcome`，再 `end`；`ERROR`：`outcome` 带 `failed: true`，字是流里的出错原话（没有就 `failed`）。
-//! - 结果先截到 [`OUTCOME_LIMIT`]（按字节、不切开一个字）。不带 `private`。同一步的 `ACTIVE` 来几次只开一次块。
+//! - 结果先截到 [`OUTCOME_LIMIT`]（按字节、不切开一个字）。同一步的 `ACTIVE` 来几次只开一次块。
+//! - 开块以后紧跟一条 `private`（`{"hosted": true}`，内容没人读，施工 AG-16）：核心照私有数据认块是不是这个驱动自己家的，没带的当别家，
+//!   下一轮换成 `<hosted-tool name=…>` 那段字交回来，agy 读了照着写进回复（2026-11-28 群里漏过两条）。带上了原样交回块，
+//!   转写照块的规矩不写它。
 //! - 这一步没收的时候来了别的步（正文、下一件工具、`result`、要交回的 MCP 调用）：把它收掉，不交结果。
 //!
 //! 结果从哪来由调用的人定：流里带了 `output` 的在 [`ToolStep::output`] 里，没带的由 `call/talk.rs` 读了转录（[`crate::brain`]）
@@ -51,6 +54,7 @@ impl Turn {
             deltas.push(
                 json!({"start": {"index": index, "kind": {"hosted_tool": {"name": step.name}}}}),
             );
+            deltas.push(json!({"private": {"index": index, "data": {"hosted": true}}}));
             if let Some(parameters) = &step.parameters {
                 for piece in pieces(parameters, TEXT_PIECE) {
                     deltas.push(json!({"text": {"index": index, "text": piece}}));

@@ -66,9 +66,10 @@ fn a_search_reads_the_transcript_under_the_home_the_tool_server_reported() {
         got.response
     );
     assert_eq!(
-        got.deltas[..4],
+        got.deltas[..5],
         [
             json!({"start": {"index": 0, "kind": {"hosted_tool": {"name": "search_web"}}}}),
+            json!({"private": {"index": 0, "data": {"hosted": true}}}),
             json!({"text": {"index": 0, "text": r#"{"query":"EditorConfig specification"}"#}}),
             json!({"outcome": {"index": 0, "text": FOUND}}),
             json!({"end": {"index": 0}}),
@@ -127,7 +128,7 @@ fn a_killed_extensions_conversation_under_the_reported_home_is_swept_by_the_next
 fn a_tool_server_with_the_extensions_own_home_changes_nothing() {
     let (mut core, got, agy, conversation) = search("ah-same", None);
     assert_eq!(
-        got.deltas[2],
+        got.deltas[3],
         json!({"outcome": {"index": 0, "text": FOUND}})
     );
     let mark = core.state.join("kept").join(&conversation);

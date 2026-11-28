@@ -327,6 +327,7 @@ fn this_turn(current: &[Message]) -> Option<String> {
 fn step_text(block: &Value, known: &Known<'_>) -> Option<String> {
     let field = |key: &str| block.get(key).and_then(Value::as_str).unwrap_or_default();
     match block.get("type").and_then(Value::as_str)? {
+        "text" if retold(block) => None,
         "text" => block_text(block, known).map(|text| words::you_said(&text)),
         "tool_call" => Some(words::you_called(field("name"), field("args"))),
         "hosted_tool" => {
@@ -346,12 +347,26 @@ fn step_text(block: &Value, known: &Known<'_>) -> Option<String> {
     }
 }
 
-/// 是工具的块：她调的工具、供应商侧工具。历史转写里不写（施工 AG-14）。
+/// 是工具的块：她调的工具、供应商侧工具，和核心把供应商侧工具换成的那段字（[`retold`]）。历史转写里不写（施工 AG-14、AG-16）。
 fn is_tool(block: &Value) -> bool {
     matches!(
         block.get("type").and_then(Value::as_str),
         Some("tool_call" | "hosted_tool")
-    )
+    ) || retold(block)
+}
+
+/// 核心把不认得是谁家的供应商侧工具块换成的一块正文（施工 AG-16）：整块从 `<hosted-tool name="` 起、到 `</hosted-tool>` 止。
+/// 外壳里的字核心挡过 `</`，收尾的只有最后那一个。
+fn retold(block: &Value) -> bool {
+    block.get("type").and_then(Value::as_str) == Some("text")
+        && block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|text| {
+                text.starts_with(words::RETOLD_HOSTED_OPEN)
+                    && text.ends_with(words::RETOLD_HOSTED_CLOSE)
+            })
 }
 
 /// 一块转成的字；不写的（思考、空的字、不认识的块）是 `None`。

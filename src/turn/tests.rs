@@ -56,9 +56,11 @@ fn search_read_reports_the_tools_as_hosted_blocks_and_skips_empty_steps_and_repo
     // 两件工具各是一块供应商侧工具（没有结果：这里没人去读转录），正文在它们后面，块一块接一块。
     let mut expected = vec![
         json!({"start": {"index": 0, "kind": {"hosted_tool": {"name": "search_web"}}}}),
+        json!({"private": {"index": 0, "data": {"hosted": true}}}),
         json!({"text": {"index": 0, "text": r#"{"query":"EditorConfig specification"}"#}}),
         json!({"end": {"index": 0}}),
         json!({"start": {"index": 1, "kind": {"hosted_tool": {"name": "read_url_content"}}}}),
+        json!({"private": {"index": 1, "data": {"hosted": true}}}),
         json!({"text": {"index": 1, "text": r#"{"Url":"https://spec.editorconfig.org/"}"#}}),
         json!({"end": {"index": 1}}),
         json!({"start": {"index": 2, "kind": "text"}}),

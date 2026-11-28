@@ -22,8 +22,9 @@ pub const ASSISTANT: &str = "Assistant:\n";
 
 /// 回复里出现了就从那里截掉的几段（施工 AG-14，`turn/forged.rs`）：以前的历史转写写工具的样子（`[called tool …]`、
 /// `[tool result]`、`[tool result, failed]`、`[provider tool …]`），转写的标签，和换行起头的「谁说的」标签。模型照转写的样子
-/// 编下一段时写的就是这些，不是给人的话。现在的转写不写工具了，前四样留着认还活着的、照以前转写开的 agy 对话。
-pub const REPLAY_MARKERS: [&str; 9] = [
+/// 编下一段时写的就是这些，不是给人的话。现在的转写不写工具了，前四样留着认还活着的、照以前转写开的 agy 对话。最后一样是核心
+/// 写供应商侧工具的那段字的头（[`RETOLD_HOSTED_OPEN`]，施工 AG-16）。
+pub const REPLAY_MARKERS: [&str; 10] = [
     "[called tool ",
     "[tool result",
     "[provider tool ",
@@ -33,7 +34,14 @@ pub const REPLAY_MARKERS: [&str; 9] = [
     "\nUser:\n",
     "<this-turn>",
     "</this-turn>",
+    "<hosted-tool ",
 ];
+
+/// 核心把不认得是谁家的供应商侧工具块换成的那段字的头尾（核心 `resources/core/drivers/hosted-tool*.txt`，施工 AG-16）。0.1.9
+/// 以前这个驱动交的块不带私有数据，日志里那些块交回来都是这段字；转写认出来当工具，不写进历史。头也在
+/// [`REPLAY_MARKERS`] 里：她照着写进回复的，出口截掉。
+pub const RETOLD_HOSTED_OPEN: &str = "<hosted-tool name=\"";
+pub const RETOLD_HOSTED_CLOSE: &str = "</hosted-tool>";
 
 /// agy 自己的控制标记（AG-14 补，2026-11-27）：模型照 agy 的指令在回复末尾写的「这件事做完了、取消了」，不是给人的话。回复里
 /// 出现了就删掉这一段，前后的照交；历史转写里她以前的回复也删掉。2026-11-27 22:27 起主人群里她每句后面都带

@@ -109,3 +109,13 @@ fn agy_control_markers_are_dropped_and_the_words_kept() {
         "突然这么正经"
     );
 }
+
+#[test]
+fn a_hosted_tool_copied_from_the_core_text_is_cut() {
+    // 2026-11-28 17:59 主人的群里发出去的原样（施工 AG-16）。
+    let (out, cut) = through(&[
+        "<hosted-tool name=\"mcp_miyu_kb_search\">\n{\"kb\":shorinwiki,query:cachyos,toolAction:Searching CachyOS in wiki,toolSummary:Wiki search}\n",
+    ]);
+    assert_eq!(out, "");
+    assert!(cut.unwrap().starts_with("<hosted-tool name="));
+}

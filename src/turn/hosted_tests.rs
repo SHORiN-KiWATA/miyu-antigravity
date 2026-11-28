@@ -43,6 +43,11 @@ fn start(index: u64, name: &str) -> Value {
     json!({"start": {"index": index, "kind": {"hosted_tool": {"name": name}}}})
 }
 
+/// 开块以后紧跟的私有数据（施工 AG-16）。
+fn mark(index: u64) -> Value {
+    json!({"private": {"index": index, "data": {"hosted": true}}})
+}
+
 fn end(index: u64) -> Value {
     json!({"end": {"index": index}})
 }
@@ -81,11 +86,13 @@ fn the_real_recording_gives_a_block_per_tool_with_the_transcript_result_and_the_
     assert!(page.starts_with("Title: EditorConfig"), "{page}");
     let mut expected = vec![
         start(0, "search_web"),
+        mark(0),
         json!({"text": {"index": 0, "text": r#"{"query":"EditorConfig specification"}"#}}),
         json!({"outcome": {"index": 0, "text": search}}),
         end(0),
         // 样本里还有 read_url_content：照同一条规矩也是一块。
         start(1, "read_url_content"),
+        mark(1),
         json!({"text": {"index": 1, "text": r#"{"Url":"https://spec.editorconfig.org/"}"#}}),
         json!({"outcome": {"index": 1, "text": page}}),
         end(1),
@@ -113,6 +120,7 @@ fn a_step_opens_once_however_many_active_lines_come_and_done_gives_the_result_th
         opened,
         vec![
             start(0, "search_web"),
+            mark(0),
             json!({"text": {"index": 0, "text": r#"{"query":"rust"}"#}})
         ]
     );
@@ -172,6 +180,7 @@ fn a_step_that_comes_as_done_or_error_alone_counts_as_the_first_sighting() {
         done.feed(tool(5, "search_web", "DONE", &info)).deltas,
         vec![
             start(0, "search_web"),
+            mark(0),
             json!({"text": {"index": 0, "text": r#"{"query":"rust"}"#}}),
             json!({"outcome": {"index": 0, "text": "found"}}),
             end(0),
@@ -184,6 +193,7 @@ fn a_step_that_comes_as_done_or_error_alone_counts_as_the_first_sighting() {
         error.feed(tool(5, "search_web", "ERROR", &info)).deltas,
         vec![
             start(0, "search_web"),
+            mark(0),
             json!({"text": {"index": 0, "text": r#"{"query":"rust"}"#}}),
             json!({"outcome": {"index": 0, "text": "boom", "failed": true}}),
             end(0),
@@ -222,7 +232,10 @@ fn a_step_without_parameters_gives_no_text_and_the_name_is_kept_as_it_is() {
         r#"{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"mcp_other_Thing"}}"#,
     )
     .unwrap();
-    assert_eq!(turn.feed(fed).deltas, vec![start(0, "mcp_other_Thing")]);
+    assert_eq!(
+        turn.feed(fed).deltas,
+        vec![start(0, "mcp_other_Thing"), mark(0)]
+    );
 }
 
 #[test]
@@ -270,7 +283,7 @@ fn an_unfinished_tool_block_is_closed_without_a_result_by_whatever_comes_next() 
     let deltas = turn
         .feed(tool(3, "other_tool", "ACTIVE", &json!({})))
         .deltas;
-    assert_eq!(deltas, vec![end(0), start(1, "other_tool")]);
+    assert_eq!(deltas, vec![end(0), start(1, "other_tool"), mark(1)]);
     // result。
     let mut turn = Turn::new("a");
     turn.feed(tool(2, "search_web", "ACTIVE", &params()));
