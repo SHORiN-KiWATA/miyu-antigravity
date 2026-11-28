@@ -254,3 +254,37 @@ fn old_replies_that_copied_the_transcript_are_cut_in_the_history() {
         "{got}"
     );
 }
+
+/// 核心换成的供应商侧工具（施工 AG-16）：0.1.9 以前驱动交的块不带私有数据，核心不认得是这家的，交回来是一块
+/// `<hosted-tool name=…>…</hosted-tool>` 的正文。这样的块当工具，历史里不写、这一轮的旁注里也不写；她照着写进回复的（没有收尾
+/// 的那种），从标记起截掉。2026-11-28 主人群里她把这段字当回复发了两条。
+#[test]
+fn hosted_tools_the_core_retold_as_text_are_tools_not_lines() {
+    let retold = "<hosted-tool name=\"search_web\">\n{\"query\":\"FlClash\"}\n<result>\nThe search for FlClash <\\/b>\n</result>\n</hosted-tool>";
+    let messages = vec![
+        user("q1"),
+        json!({"role": "assistant", "blocks": [
+            {"type": "text", "text": retold},
+            {"type": "text", "text": "查到了"}
+        ]}),
+        user("q2"),
+        json!({"role": "assistant", "blocks": [{"type": "text", "text": retold}]}),
+        user("q3"),
+        assistant("好的<hosted-tool name=\"mcp_miyu_kb_search\">\n{\"kb\":shorinwiki}\n"),
+        user("q4"),
+        json!({"role": "assistant", "blocks": [
+            {"type": "text", "text": retold},
+            {"type": "tool_call", "call_id": "c_1", "name": "kb_search", "args": "{}"}
+        ]}),
+        json!({"role": "tool", "blocks": [{"type": "text", "text": "found"}]}),
+    ];
+    let got = transcribe(&request(&messages), BUDGET).unwrap();
+    assert!(!got.contains("<hosted-tool"), "{got}");
+    assert!(!got.contains("<result>"), "{got}");
+    assert!(
+        got.contains(
+            "User:\nq1\n\nAssistant:\n查到了\n\nUser:\nq2\n\nUser:\nq3\n\nAssistant:\n好的\n\nUser:\nq4\n\n"
+        ),
+        "{got}"
+    );
+}

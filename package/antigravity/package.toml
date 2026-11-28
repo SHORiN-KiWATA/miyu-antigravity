@@ -2,7 +2,7 @@
 # 这家供应商的每一次调用交给本机的 Antigravity CLI（agy），用主人在 agy 里已有的登录和订阅额度。设计见 docs/00-设计.md。
 
 [package]
-version = "0.1.8"
+version = "0.1.9"
 protocol = [1, 1]
 miyu = "2026.11.0-rc.5"
 name = { en = "Antigravity", zh = "Antigravity" }
